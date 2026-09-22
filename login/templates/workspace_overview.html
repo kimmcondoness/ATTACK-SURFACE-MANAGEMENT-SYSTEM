@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overview - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/workspace.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="ws-shell">
+    {% include "_workspace_sidebar.html" %}
+
+    <main class="ws-main">
+      <div class="ws-hero">
+        <div class="ws-hero-mark"><span class="dot-lg"></span></div>
+        <div>
+          <h1>Welcome back, {{ user.first_name or user.username }}<span class="ws-hero-badge">Workspace</span></h1>
+          <p>
+            Continuous discovery and monitoring of your organization's authorized external attack
+            surface — domains, subdomains, IP addresses, web applications, open ports and exposed
+            services, all scoped to the targets assigned to you.
+          </p>
+        </div>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <div class="ws-stats">
+        <div class="ws-stat"><span class="n">{{ summary.total_targets }}</span><span class="l">Targets</span></div>
+        <div class="ws-stat"><span class="n">6</span><span class="l">Categories</span></div>
+        <div class="ws-stat"><span class="n">{{ summary.total_vulnerabilities }}</span><span class="l">Open findings</span></div>
+        <div class="ws-stat"><span class="n">{{ summary.risk_score }}</span><span class="l">Risk score</span></div>
+      </div>
+
+      <p class="ws-section-label">Workspace sections</p>
+      <div class="ws-category-grid">
+        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">R</span>
+            <h2>Recon</h2>
+            <span class="count">{{ nav_counts.domains + nav_counts.subdomains + nav_counts.ips }}</span>
+          </div>
+          <p>Domains &middot; Subdomains &middot; IP Addresses</p>
+        </a>
+
+        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">W</span>
+            <h2>Web</h2>
+            <span class="count">{{ nav_counts.webapps }}</span>
+          </div>
+          <p>Web Applications &middot; APIs <span class="tag-planned">Planned</span></p>
+        </a>
+
+        <a class="ws-category-card ws-category-card-featured" href="{{ url_for('auth_pages.workspace_dashboard') }}#dorking">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">G</span>
+            <h2>Google Dorking <span class="tag-featured">OSINT</span></h2>
+            <span class="count">{{ dork_count }}</span>
+          </div>
+          <p>Curated dork queries for exposed files, admin panels, secrets and more &mdash; most EASM tools skip this.</p>
+        </a>
+
+        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#network">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">N</span>
+            <h2>Network</h2>
+            <span class="count">{{ nav_counts.ports }}</span>
+          </div>
+          <p>Open Ports &middot; Public Services</p>
+        </a>
+
+        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#findings">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">V</span>
+            <h2>Vulnerabilities</h2>
+            <span class="count">{{ summary.total_vulnerabilities }}</span>
+          </div>
+          <p>Severity triage &middot; CVE tracking &middot; Status review</p>
+        </a>
+
+        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#reports">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">T</span>
+            <h2>Reports</h2>
+            <span class="count">{{ findings|length }}</span>
+          </div>
+          <p>Export findings as JSON, CSV or Markdown</p>
+        </a>
+
+        {% if user.role in ('threat_intel_analyst', 'it_admin') %}
+        <a class="ws-category-card" href="{{ url_for('threat_intel.threat_intel_page') }}">
+          <div class="ws-category-head">
+            <span class="ws-category-icon">I</span>
+            <h2>Threat Intelligence</h2>
+          </div>
+          <p>CVSS &middot; CISA KEV &middot; public exploit signals, prioritized across every target</p>
+        </a>
+        {% endif %}
+      </div>
+
+      <p class="ws-hint">Pick a section from the sidebar — or click a category above — to see the full dashboard.</p>
+    </main>
+  </div>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

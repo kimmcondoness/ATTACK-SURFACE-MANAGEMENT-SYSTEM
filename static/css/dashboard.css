@@ -1,0 +1,433 @@
+/* Attack Surface Management - authenticated app shell (admin + user dashboards) */
+
+:root {
+  --ink: #0c1210;
+  --panel-line: #1e3a2f;
+  --paper: #f4f1e9;
+  --paper-line: #d9d3c1;
+  --card: #ffffff;
+  --text: #1c1f1a;
+  --muted: #6b6a5f;
+  --accent: #3fae6a;
+  --accent-dark: #2c8752;
+  --crit: #b3261e;
+  --high: #b5651d;
+  --med: #a68b12;
+  --low: #4c6b8a;
+  --error-bg: #fbeae7;
+  --error-line: #d98f7f;
+  --error-text: #9a3324;
+  --mono: "Consolas", "SFMono-Regular", "Liberation Mono", Menlo, monospace;
+  --sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--paper);
+}
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 2rem;
+  background: var(--ink);
+  color: #eef4ef;
+  border-bottom: 3px solid var(--accent);
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+
+.app-brand .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(63, 174, 106, 0.25);
+}
+
+.app-topbar nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.app-topbar nav a {
+  color: #c7d6cd;
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.app-topbar nav a:hover {
+  color: #ffffff;
+}
+
+.app-who {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  font-size: 0.85rem;
+}
+
+.role-badge {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 3px;
+}
+
+.btn-logout {
+  background: none;
+  border: 1px solid #33473e;
+  color: #d7e6dc;
+  padding: 0.4rem 0.8rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.btn-logout:hover {
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.app-main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.page-head {
+  margin-bottom: 1.75rem;
+}
+
+.page-head .kicker {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-dark);
+  margin: 0 0 0.35rem;
+}
+
+.page-head h1 {
+  margin: 0 0 0.3rem;
+  font-size: 1.55rem;
+}
+
+.page-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.alert-error,
+.alert-success {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid;
+  border-left-width: 3px;
+}
+
+.alert-error {
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border-color: var(--error-line);
+  border-left-color: var(--error-text);
+}
+
+.alert-success {
+  background-color: #eaf4ec;
+  color: var(--accent-dark);
+  border-color: #b7dcc2;
+  border-left-color: var(--accent-dark);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--paper-line);
+  border: 1px solid var(--paper-line);
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: var(--card);
+  padding: 1.1rem 1.25rem;
+}
+
+.stat-card .n {
+  display: block;
+  font-family: var(--mono);
+  font-size: 1.7rem;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.stat-card .l {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.stat-card.crit .n { color: var(--crit); }
+.stat-card.high .n { color: var(--high); }
+.stat-card.med .n { color: var(--med); }
+.stat-card.low .n { color: var(--low); }
+
+.panel-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--paper-line);
+  margin-bottom: 1.5rem;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--paper-line);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.panel-head span {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.65rem 1.1rem;
+  border-bottom: 1px solid var(--paper-line);
+}
+
+th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: #faf8f2;
+}
+
+.pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pill-active { background: #eaf4ec; color: var(--accent-dark); }
+.pill-inactive { background: #f1efe7; color: var(--muted); }
+.pill-admin { background: #f4e9e1; color: #9a5a24; }
+.pill-analyst { background: #e3ecf5; color: #2b5e93; }
+.pill-security { background: #efe4f5; color: #6c3c99; }
+
+.pill-completed { background: #eaf4ec; color: var(--accent-dark); }
+.pill-failed { background: var(--error-bg); color: var(--error-text); }
+.pill-running, .pill-pending { background: #f1efe7; color: var(--muted); }
+
+.pill-critical { background: #fbeae7; color: var(--crit); }
+.pill-high { background: #fbeee2; color: var(--high); }
+.pill-medium { background: #faf3de; color: var(--med); }
+.pill-low { background: #e9eff5; color: var(--low); }
+
+.empty-row {
+  padding: 1.75rem 1.1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.text-mono {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.row-actions form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.role-select {
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--paper-line);
+  border-radius: 3px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.btn-mini {
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 3px;
+  border: 1px solid var(--paper-line);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.btn-mini:hover {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
+.btn-mini-save {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
+.btn-mini-danger {
+  border-color: var(--error-line);
+  color: var(--error-text);
+}
+
+.btn-mini-danger:hover {
+  background: var(--error-bg);
+}
+
+/* ---------- cookie consent banner ---------- */
+
+.cookie-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+  background: var(--ink);
+  color: #d7e6dc;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 3px solid var(--accent);
+}
+
+.cookie-banner[hidden] {
+  display: none;
+}
+
+.cookie-banner p {
+  margin: 0;
+  font-size: 0.85rem;
+  max-width: 56rem;
+}
+
+.cookie-banner a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.cookie-banner-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.cookie-banner button {
+  border: none;
+  border-radius: 3px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cookie-accept {
+  background: var(--accent-dark);
+  color: #ffffff;
+}
+
+.cookie-accept:hover {
+  background: #256e42;
+}
+
+.cookie-dismiss {
+  background: transparent;
+  color: #c7d6cd;
+  border: 1px solid #33473e;
+}
+
+.cookie-dismiss:hover {
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+@media (max-width: 900px) {
+  .panel-row {
+    grid-template-columns: 1fr;
+  }
+
+  .app-main {
+    padding: 1.25rem;
+  }
+
+  .app-topbar {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.9rem 1.25rem;
+  }
+}

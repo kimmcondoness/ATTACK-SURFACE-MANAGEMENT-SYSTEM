@@ -1,0 +1,816 @@
+import csv
+import io
+import re
+import time
+
+from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from flask_login import current_user, login_required, login_user, logout_user
+
+from extensions import bcrypt, db, limiter
+from models import (
+    Asset,
+    AuthorizedTarget,
+    PortService,
+    ROLE_ANALYST,
+    ROLE_IT_ADMIN,
+    ROLE_SECURITY_TEAM,
+    ROLE_THREAT_INTEL,
+    ROLES,
+    Scan,
+    User,
+    Vulnerability,
+)
+from services.chart_service import RANGES as CHART_RANGES, normalize_range, scan_status_totals, severity_totals
+from services.dork_service import dork_categories_for_domain, total_dork_count
+from services.report_service import list_reports_for_target
+from services.risk_service import risk_score
+from utils.audit import log_action
+from utils.captcha import generate_captcha, verify_captcha
+from utils.device_trust import COOKIE_NAME as DEVICE_TRUST_COOKIE, set_device_trust_cookie, verify_device_trust_token
+from utils.mailer import send_otp_email
+from utils.otp import generate_otp, verify_otp
+from utils.validators import ValidationError, validate_role
+
+auth_pages_bp = Blueprint("auth_pages", __name__)
+
+_CAPTCHA_KEYS = ("captcha_question", "captcha_answer_hash", "captcha_expires_at")
+_PENDING_MFA_KEYS = ("pending_user_id", "otp_hash", "otp_expires_at", "otp_attempts", "otp_last_sent_at")
+_PENDING_SIGNUP_KEYS = (
+    "pending_signup",
+    "signup_otp_hash",
+    "signup_otp_expires_at",
+    "signup_otp_attempts",
+    "signup_otp_last_sent_at",
+)
+_PENDING_RESET_KEYS = (
+    "reset_user_id",
+    "reset_email",
+    "reset_otp_hash",
+    "reset_otp_expires_at",
+    "reset_otp_attempts",
+    "reset_otp_last_sent_at",
+    "reset_verified",
+)
+_OTP_MAX_ATTEMPTS = 5
+_OTP_RESEND_COOLDOWN_SECONDS = 60
+_SIGNUP_ROLES = (ROLE_ANALYST, ROLE_SECURITY_TEAM, ROLE_THREAT_INTEL, ROLE_IT_ADMIN)
+
+_USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,30}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _new_captcha():
+    question, answer_hash, expires_at = generate_captcha()
+    session["captcha_question"] = question
+    session["captcha_answer_hash"] = answer_hash
+    session["captcha_expires_at"] = expires_at
+    return question
+
+
+def _clear(*keys):
+    for key in keys:
+        session.pop(key, None)
+
+
+def _send_login_otp(user):
+    code, code_hash, expires_at = generate_otp()
+    session["pending_user_id"] = user.id
+    session["otp_hash"] = code_hash
+    session["otp_expires_at"] = expires_at
+    session["otp_attempts"] = 0
+    session["otp_last_sent_at"] = time.time()
+    send_otp_email(user.email, code)
+
+
+def _send_signup_otp(email):
+    code, code_hash, expires_at = generate_otp()
+    session["signup_otp_hash"] = code_hash
+    session["signup_otp_expires_at"] = expires_at
+    session["signup_otp_attempts"] = 0
+    session["signup_otp_last_sent_at"] = time.time()
+    send_otp_email(email, code)
+
+
+def _send_reset_otp(user):
+    code, code_hash, expires_at = generate_otp()
+    session["reset_user_id"] = user.id
+    session["reset_email"] = user.email
+    session["reset_otp_hash"] = code_hash
+    session["reset_otp_expires_at"] = expires_at
+    session["reset_otp_attempts"] = 0
+    session["reset_otp_last_sent_at"] = time.time()
+    send_otp_email(user.email, code, purpose="password reset")
+
+
+def _resend_available_at(session_key):
+    last_sent = session.get(session_key, 0)
+    return last_sent + _OTP_RESEND_COOLDOWN_SECONDS if last_sent else 0
+
+
+@auth_pages_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def login_page():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    if request.method == "GET":
+        question = _new_captcha()
+        return render_template("login.html", captcha_question=question)
+
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+    captcha_answer = request.form.get("captcha_answer", "")
+
+    captcha_ok = verify_captcha(
+        captcha_answer,
+        session.get("captcha_answer_hash"),
+        session.get("captcha_expires_at"),
+    )
+    _clear(*_CAPTCHA_KEYS)
+
+    if not captcha_ok:
+        flash("Incorrect or expired CAPTCHA answer. Please try again.", "error")
+        question = _new_captcha()
+        return render_template("login.html", captcha_question=question, username=username), 400
+
+    user = User.query.filter_by(username=username).first()
+    if not user or not user.check_password(password):
+        log_action(None, "login_failed", detail=f"username={username}")
+        flash("Invalid username or password.", "error")
+        question = _new_captcha()
+        return render_template("login.html", captcha_question=question, username=username), 401
+
+    if not user.is_active_flag:
+        log_action(user.id, "login_failed_deactivated")
+        flash("Your account has been deactivated. Please contact an administrator.", "error")
+        question = _new_captcha()
+        return render_template("login.html", captcha_question=question, username=username), 403
+
+    if user.role == ROLE_IT_ADMIN:
+        login_user(user)
+        session.permanent = True
+        log_action(user.id, "login_success", detail="admin, MFA skipped")
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    if verify_device_trust_token(request.cookies.get(DEVICE_TRUST_COOKIE), user.id):
+        login_user(user)
+        session.permanent = True
+        log_action(user.id, "login_success", detail="trusted device, MFA skipped")
+        resp = redirect(url_for("auth_pages.dashboard_placeholder"))
+        return set_device_trust_cookie(resp, user.id)
+
+    _send_login_otp(user)
+    log_action(user.id, "login_password_verified", detail="awaiting MFA code")
+
+    return redirect(url_for("auth_pages.verify_otp_page"))
+
+
+@auth_pages_bp.route("/signup", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
+def signup_page():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    if request.method == "GET":
+        question = _new_captcha()
+        return render_template("signup.html", captcha_question=question)
+
+    form = {
+        "first_name": request.form.get("first_name", "").strip(),
+        "last_name": request.form.get("last_name", "").strip(),
+        "username": request.form.get("username", "").strip(),
+        "email": request.form.get("email", "").strip().lower(),
+        "role": request.form.get("role", ROLE_ANALYST),
+    }
+    password = request.form.get("password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    captcha_answer = request.form.get("captcha_answer", "")
+
+    def reject(message, status=400):
+        flash(message, "error")
+        question = _new_captcha()
+        return render_template("signup.html", captcha_question=question, **form), status
+
+    captcha_ok = verify_captcha(
+        captcha_answer,
+        session.get("captcha_answer_hash"),
+        session.get("captcha_expires_at"),
+    )
+    _clear(*_CAPTCHA_KEYS)
+    if not captcha_ok:
+        return reject("Incorrect or expired CAPTCHA answer. Please try again.")
+
+    if not form["first_name"] or not form["last_name"]:
+        return reject("First and last name are required.")
+    if form["role"] not in _SIGNUP_ROLES:
+        return reject("Choose a valid account type.")
+    if not _USERNAME_RE.match(form["username"]):
+        return reject("Username must be 3-30 characters (letters, numbers, dots, underscores, hyphens).")
+    if not _EMAIL_RE.match(form["email"]):
+        return reject("Enter a valid email address.")
+    if len(password) < 10 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        return reject("Password must be at least 10 characters and include a letter and a number.")
+    if password != confirm_password:
+        return reject("Passwords do not match.")
+    if User.query.filter_by(username=form["username"]).first():
+        return reject("That username is already taken.")
+    if User.query.filter_by(email=form["email"]).first():
+        return reject("An account with that email already exists.")
+
+    session["pending_signup"] = {
+        **form,
+        "password_hash": bcrypt.generate_password_hash(password).decode("utf-8"),
+    }
+
+    _send_signup_otp(form["email"])
+    log_action(None, "signup_started", detail=f"username={form['username']}")
+
+    return redirect(url_for("auth_pages.signup_verify_page"))
+
+
+@auth_pages_bp.route("/signup/verify", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def signup_verify_page():
+    pending = session.get("pending_signup")
+    if not pending:
+        flash("Please fill in the sign up form first.", "error")
+        return redirect(url_for("auth_pages.signup_page"))
+
+    if request.method == "GET":
+        return render_template(
+            "verify_otp.html",
+            pending_email=pending["email"],
+            mode="signup",
+            resend_available_at=_resend_available_at("signup_otp_last_sent_at"),
+        )
+
+    submitted_code = request.form.get("otp_code", "")
+    attempts = session.get("signup_otp_attempts", 0)
+
+    ok = verify_otp(submitted_code, session.get("signup_otp_hash"), session.get("signup_otp_expires_at"))
+    if not ok:
+        attempts += 1
+        session["signup_otp_attempts"] = attempts
+        if attempts >= _OTP_MAX_ATTEMPTS:
+            log_action(None, "signup_verify_locked", detail=f"username={pending['username']}")
+            _clear(*_PENDING_SIGNUP_KEYS)
+            flash("Too many incorrect codes. Please sign up again.", "error")
+            return redirect(url_for("auth_pages.signup_page"))
+
+        log_action(None, "signup_verify_failed", detail=f"username={pending['username']}")
+        flash(f"Incorrect or expired code. {_OTP_MAX_ATTEMPTS - attempts} attempt(s) remaining.", "error")
+        return render_template(
+            "verify_otp.html",
+            pending_email=pending["email"],
+            mode="signup",
+            resend_available_at=_resend_available_at("signup_otp_last_sent_at"),
+        ), 401
+
+    if User.query.filter_by(username=pending["username"]).first() or User.query.filter_by(email=pending["email"]).first():
+        _clear(*_PENDING_SIGNUP_KEYS)
+        flash("That username or email was just registered by someone else. Please sign up again.", "error")
+        return redirect(url_for("auth_pages.signup_page"))
+
+    user = User(
+        username=pending["username"],
+        email=pending["email"],
+        first_name=pending["first_name"],
+        last_name=pending["last_name"],
+        role=pending.get("role", ROLE_ANALYST) if pending.get("role") in _SIGNUP_ROLES else ROLE_ANALYST,
+    )
+    user.password_hash = pending["password_hash"]
+    db.session.add(user)
+    db.session.commit()
+    _clear(*_PENDING_SIGNUP_KEYS)
+
+    log_action(user.id, "signup_verified", detail=f"username={user.username}")
+    flash("Account created and email verified. You can now sign in.", "success")
+    return redirect(url_for("auth_pages.login_page"))
+
+
+@auth_pages_bp.route("/signup/verify/resend", methods=["POST"])
+@limiter.limit("5 per minute")
+def resend_signup_otp():
+    pending = session.get("pending_signup")
+    if not pending:
+        flash("Please fill in the sign up form first.", "error")
+        return redirect(url_for("auth_pages.signup_page"))
+
+    remaining = _resend_available_at("signup_otp_last_sent_at") - time.time()
+    if remaining > 0:
+        flash(f"Please wait {int(remaining) + 1}s before requesting another code.", "error")
+        return redirect(url_for("auth_pages.signup_verify_page"))
+
+    _send_signup_otp(pending["email"])
+    log_action(None, "signup_code_resent", detail=f"username={pending['username']}")
+    flash("A new verification code has been sent.", "success")
+    return redirect(url_for("auth_pages.signup_verify_page"))
+
+
+@auth_pages_bp.route("/login/verify", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def verify_otp_page():
+    pending_user_id = session.get("pending_user_id")
+    if not pending_user_id:
+        flash("Please log in first.", "error")
+        return redirect(url_for("auth_pages.login_page"))
+
+    if request.method == "GET":
+        user = User.query.get(pending_user_id)
+        return render_template(
+            "verify_otp.html",
+            pending_email=user.email if user else None,
+            mode="login",
+            resend_available_at=_resend_available_at("otp_last_sent_at"),
+        )
+
+    submitted_code = request.form.get("otp_code", "")
+    attempts = session.get("otp_attempts", 0)
+
+    ok = verify_otp(submitted_code, session.get("otp_hash"), session.get("otp_expires_at"))
+    if not ok:
+        attempts += 1
+        session["otp_attempts"] = attempts
+        max_attempts = 5
+        if attempts >= max_attempts:
+            log_action(pending_user_id, "mfa_failed_locked", detail=f"attempts={attempts}")
+            _clear(*_PENDING_MFA_KEYS)
+            flash("Too many incorrect codes. Please log in again.", "error")
+            return redirect(url_for("auth_pages.login_page"))
+
+        log_action(pending_user_id, "mfa_failed", detail=f"attempts={attempts}")
+        flash(f"Incorrect or expired code. {max_attempts - attempts} attempt(s) remaining.", "error")
+        user = User.query.get(pending_user_id)
+        return render_template(
+            "verify_otp.html",
+            pending_email=user.email if user else None,
+            mode="login",
+            resend_available_at=_resend_available_at("otp_last_sent_at"),
+        ), 401
+
+    user = User.query.get(pending_user_id)
+    _clear(*_PENDING_MFA_KEYS)
+
+    if not user or not user.is_active_flag:
+        flash("Account is no longer active.", "error")
+        return redirect(url_for("auth_pages.login_page"))
+
+    login_user(user)
+    session.permanent = True
+    log_action(user.id, "login_success", detail="mfa verified")
+    resp = redirect(url_for("auth_pages.dashboard_placeholder"))
+    return set_device_trust_cookie(resp, user.id)
+
+
+@auth_pages_bp.route("/login/verify/resend", methods=["POST"])
+@limiter.limit("5 per minute")
+def resend_login_otp():
+    pending_user_id = session.get("pending_user_id")
+    if not pending_user_id:
+        flash("Please log in first.", "error")
+        return redirect(url_for("auth_pages.login_page"))
+
+    remaining = _resend_available_at("otp_last_sent_at") - time.time()
+    if remaining > 0:
+        flash(f"Please wait {int(remaining) + 1}s before requesting another code.", "error")
+        return redirect(url_for("auth_pages.verify_otp_page"))
+
+    user = User.query.get(pending_user_id)
+    if not user:
+        flash("Please log in first.", "error")
+        return redirect(url_for("auth_pages.login_page"))
+
+    _send_login_otp(user)
+    log_action(user.id, "mfa_code_resent")
+    flash("A new verification code has been sent.", "success")
+    return redirect(url_for("auth_pages.verify_otp_page"))
+
+
+@auth_pages_bp.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
+def forgot_password_page():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    if request.method == "GET":
+        return render_template("forgot_password.html")
+
+    email = request.form.get("email", "").strip().lower()
+    user = User.query.filter_by(email=email).first()
+
+    if user and user.is_active_flag:
+        _send_reset_otp(user)
+        log_action(user.id, "password_reset_requested")
+        return redirect(url_for("auth_pages.forgot_password_verify_page"))
+
+    log_action(None, "password_reset_requested_unknown", detail=f"email={email}")
+    flash("If an account exists for that email, a verification code has been sent.", "success")
+    return redirect(url_for("auth_pages.login_page"))
+
+
+@auth_pages_bp.route("/forgot-password/verify", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def forgot_password_verify_page():
+    pending_user_id = session.get("reset_user_id")
+    if not pending_user_id:
+        flash("Please request a password reset code first.", "error")
+        return redirect(url_for("auth_pages.forgot_password_page"))
+
+    if request.method == "GET":
+        return render_template(
+            "verify_otp.html",
+            pending_email=session.get("reset_email"),
+            mode="reset",
+            resend_available_at=_resend_available_at("reset_otp_last_sent_at"),
+        )
+
+    submitted_code = request.form.get("otp_code", "")
+    attempts = session.get("reset_otp_attempts", 0)
+
+    ok = verify_otp(submitted_code, session.get("reset_otp_hash"), session.get("reset_otp_expires_at"))
+    if not ok:
+        attempts += 1
+        session["reset_otp_attempts"] = attempts
+        if attempts >= _OTP_MAX_ATTEMPTS:
+            log_action(pending_user_id, "password_reset_verify_locked")
+            _clear(*_PENDING_RESET_KEYS)
+            flash("Too many incorrect codes. Please request a new reset code.", "error")
+            return redirect(url_for("auth_pages.forgot_password_page"))
+
+        log_action(pending_user_id, "password_reset_verify_failed", detail=f"attempts={attempts}")
+        flash(f"Incorrect or expired code. {_OTP_MAX_ATTEMPTS - attempts} attempt(s) remaining.", "error")
+        return render_template(
+            "verify_otp.html",
+            pending_email=session.get("reset_email"),
+            mode="reset",
+            resend_available_at=_resend_available_at("reset_otp_last_sent_at"),
+        ), 401
+
+    session["reset_verified"] = True
+    log_action(pending_user_id, "password_reset_verified")
+    return redirect(url_for("auth_pages.reset_password_page"))
+
+
+@auth_pages_bp.route("/forgot-password/verify/resend", methods=["POST"])
+@limiter.limit("5 per minute")
+def resend_reset_otp():
+    pending_user_id = session.get("reset_user_id")
+    if not pending_user_id:
+        flash("Please request a password reset code first.", "error")
+        return redirect(url_for("auth_pages.forgot_password_page"))
+
+    remaining = _resend_available_at("reset_otp_last_sent_at") - time.time()
+    if remaining > 0:
+        flash(f"Please wait {int(remaining) + 1}s before requesting another code.", "error")
+        return redirect(url_for("auth_pages.forgot_password_verify_page"))
+
+    user = User.query.get(pending_user_id)
+    if not user:
+        _clear(*_PENDING_RESET_KEYS)
+        flash("Please request a password reset code first.", "error")
+        return redirect(url_for("auth_pages.forgot_password_page"))
+
+    _send_reset_otp(user)
+    log_action(user.id, "password_reset_code_resent")
+    flash("A new verification code has been sent.", "success")
+    return redirect(url_for("auth_pages.forgot_password_verify_page"))
+
+
+@auth_pages_bp.route("/reset-password", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def reset_password_page():
+    pending_user_id = session.get("reset_user_id")
+    if not pending_user_id or not session.get("reset_verified"):
+        flash("Please verify your identity first.", "error")
+        return redirect(url_for("auth_pages.forgot_password_page"))
+
+    if request.method == "GET":
+        return render_template("reset_password.html")
+
+    password = request.form.get("password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    if len(password) < 10 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        flash("Password must be at least 10 characters and include a letter and a number.", "error")
+        return render_template("reset_password.html"), 400
+    if password != confirm_password:
+        flash("Passwords do not match.", "error")
+        return render_template("reset_password.html"), 400
+
+    user = User.query.get(pending_user_id)
+    if not user:
+        _clear(*_PENDING_RESET_KEYS)
+        flash("Something went wrong. Please try again.", "error")
+        return redirect(url_for("auth_pages.forgot_password_page"))
+
+    user.set_password(password)
+    db.session.commit()
+    _clear(*_PENDING_RESET_KEYS)
+    log_action(user.id, "password_reset_completed")
+    flash("Your password has been reset. You can now sign in.", "success")
+    resp = redirect(url_for("auth_pages.login_page"))
+    resp.delete_cookie(DEVICE_TRUST_COOKIE)
+    return resp
+
+
+def _my_target_ids():
+    return [
+        row.id
+        for row in AuthorizedTarget.query.filter_by(owner_id=current_user.id).with_entities(AuthorizedTarget.id).all()
+    ]
+
+
+def _my_findings(target_ids):
+    if not target_ids:
+        return []
+    return (
+        Vulnerability.query.join(Asset)
+        .filter(Asset.target_id.in_(target_ids))
+        .order_by(Vulnerability.discovered_at.desc())
+        .all()
+    )
+
+
+def _selected_target_id(my_target_ids):
+    raw = request.args.get("target_id", type=int)
+    return raw if raw in my_target_ids else None
+
+
+def _workspace_context():
+    my_targets = AuthorizedTarget.query.filter_by(owner_id=current_user.id).order_by(
+        AuthorizedTarget.created_at.desc()
+    ).all()
+    my_target_ids = [t.id for t in my_targets]
+    target_map = {t.id: t.domain for t in my_targets}
+    target_risk = {t.id: risk_score(t.id) for t in my_targets}
+    summary = {
+        "total_targets": len(my_targets),
+        "authorized_targets": sum(1 for t in my_targets if t.authorized),
+        "total_assets": sum(len(t.assets) for t in my_targets),
+        "total_vulnerabilities": sum(len(a.vulnerabilities) for t in my_targets for a in t.assets),
+        "risk_score": sum(target_risk.values()),
+    }
+
+    # Sidebar counts always reflect the whole inventory; everything below
+    # (assets/network/findings/scan history/charts) is scoped to whichever
+    # single target is selected, so a freshly scanned site shows up in its
+    # own clean view instead of blending into every other target's rows.
+    all_assets = [a for t in my_targets for a in t.assets]
+    nav_counts = {
+        "domains": len(my_targets),
+        "subdomains": sum(1 for a in all_assets if a.subdomain),
+        "ips": sum(1 for a in all_assets if a.ip_address),
+        "webapps": sum(1 for a in all_assets if a.url),
+        "ports": PortService.query.filter(PortService.asset_id.in_([a.id for a in all_assets])).count()
+        if all_assets
+        else 0,
+        "services": len(
+            {
+                p.service_name
+                for p in PortService.query.filter(PortService.asset_id.in_([a.id for a in all_assets])).all()
+                if p.service_name
+            }
+        )
+        if all_assets
+        else 0,
+    }
+
+    selected_target_id = _selected_target_id(my_target_ids)
+    scoped_target_ids = [selected_target_id] if selected_target_id else my_target_ids
+    scoped_targets = [t for t in my_targets if t.id in scoped_target_ids]
+
+    scan_history = (
+        Scan.query.filter(Scan.target_id.in_(scoped_target_ids)).order_by(Scan.started_at.desc()).limit(200).all()
+        if scoped_target_ids
+        else []
+    )
+    findings = _my_findings(scoped_target_ids)
+    my_assets = [a for t in scoped_targets for a in t.assets]
+    asset_map = {a.id: (a.subdomain or a.url or a.ip_address or f"asset-{a.id}") for a in my_assets}
+    my_ports = (
+        PortService.query.filter(PortService.asset_id.in_([a.id for a in my_assets])).all()
+        if my_assets
+        else []
+    )
+    chart_range = normalize_range(request.args.get("range"))
+    scan_totals = scan_status_totals(scoped_target_ids, chart_range)
+    severity_counts = severity_totals(scoped_target_ids, chart_range)
+
+    vulnerable_count = sum(1 for f in findings if f.status == "open")
+    needs_review_count = sum(1 for f in findings if f.status == "in_progress")
+    scoped_asset_total = sum(len(t.assets) for t in scoped_targets)
+    scoped_risk_score = sum(risk_score(t.id) for t in scoped_targets)
+    stat_values = {
+        "targets": len(scoped_targets),
+        "assets": scoped_asset_total,
+        "vulnerable": vulnerable_count,
+        "needsreview": needs_review_count,
+        "risk": scoped_risk_score,
+    }
+    max_stat = max(stat_values.values()) if any(stat_values.values()) else 0
+    stat_bar_pct = {
+        key: (round(value * 100 / max_stat) if max_stat else 0) for key, value in stat_values.items()
+    }
+
+    target_reports = list_reports_for_target(selected_target_id) if selected_target_id else []
+    dork_categories = (
+        dork_categories_for_domain(target_map[selected_target_id]) if selected_target_id else []
+    )
+
+    return {
+        "user": current_user,
+        "targets": my_targets,
+        "selected_target_id": selected_target_id,
+        "scoped_stat_values": stat_values,
+        "target_reports": target_reports,
+        "dork_categories": dork_categories,
+        "dork_count": total_dork_count(),
+        "recent_scans": scan_history,
+        "summary": summary,
+        "target_map": target_map,
+        "target_risk": target_risk,
+        "findings": findings,
+        "assets": my_assets,
+        "ports": my_ports,
+        "asset_map": asset_map,
+        "nav_counts": nav_counts,
+        "vulnerable_count": vulnerable_count,
+        "needs_review_count": needs_review_count,
+        "scan_totals": scan_totals,
+        "severity_totals": severity_counts,
+        "stat_bar_pct": stat_bar_pct,
+        "chart_range": chart_range,
+        "chart_ranges": CHART_RANGES,
+    }
+
+
+@auth_pages_bp.route("/dashboard")
+def dashboard_placeholder():
+    if not current_user.is_authenticated:
+        return redirect(url_for("auth_pages.login_page"))
+    if current_user.role == ROLE_IT_ADMIN:
+        return redirect(url_for("auth_pages.admin_dashboard"))
+
+    return render_template("workspace_overview.html", active_nav="overview", **_workspace_context())
+
+
+@auth_pages_bp.route("/dashboard/details")
+@login_required
+def workspace_dashboard():
+    if current_user.role == ROLE_IT_ADMIN:
+        return redirect(url_for("auth_pages.admin_dashboard"))
+
+    return render_template("dashboard_user.html", active_nav="dashboard", **_workspace_context())
+
+
+def _export_target_ids():
+    my_target_ids = _my_target_ids()
+    selected = _selected_target_id(my_target_ids)
+    return [selected] if selected else my_target_ids
+
+
+@auth_pages_bp.route("/workspace/findings/export.json")
+@login_required
+def export_findings_json():
+    findings = _my_findings(_export_target_ids())
+    return jsonify({"findings": [f.to_dict() for f in findings]})
+
+
+@auth_pages_bp.route("/workspace/findings/export.csv")
+@login_required
+def export_findings_csv():
+    findings = _my_findings(_export_target_ids())
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["CVE", "Severity", "Title", "Status", "Discovered"])
+    for f in findings:
+        writer.writerow([
+            f.cve or "-",
+            f.severity,
+            f.title,
+            f.status,
+            f.discovered_at.strftime("%Y-%m-%d") if f.discovered_at else "-",
+        ])
+
+    log_action(current_user.id, "findings_exported", detail="format=csv")
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=findings.csv"},
+    )
+
+
+@auth_pages_bp.route("/workspace/findings/export.md")
+@login_required
+def export_findings_markdown():
+    findings = _my_findings(_export_target_ids())
+    lines = ["# Findings export", "", "| CVE | Severity | Title | Status | Discovered |", "| --- | --- | --- | --- | --- |"]
+    for f in findings:
+        discovered = f.discovered_at.strftime("%Y-%m-%d") if f.discovered_at else "-"
+        lines.append(f"| {f.cve or '-'} | {f.severity} | {f.title} | {f.status} | {discovered} |")
+
+    log_action(current_user.id, "findings_exported", detail="format=markdown")
+    return Response(
+        "\n".join(lines) + "\n",
+        mimetype="text/markdown",
+        headers={"Content-Disposition": "attachment; filename=findings.md"},
+    )
+
+
+@auth_pages_bp.route("/admin/dashboard")
+@login_required
+def admin_dashboard():
+    if current_user.role != ROLE_IT_ADMIN:
+        flash("You do not have permission to view that page.", "error")
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    users = User.query.order_by(User.created_at.desc()).all()
+    role_counts = {
+        "total": len(users),
+        "it_admin": sum(1 for u in users if u.role == ROLE_IT_ADMIN),
+        "analyst": sum(1 for u in users if u.role == ROLE_ANALYST),
+        "security_team": sum(1 for u in users if u.role == ROLE_SECURITY_TEAM),
+        "threat_intel": sum(1 for u in users if u.role == ROLE_THREAT_INTEL),
+    }
+
+    return render_template(
+        "dashboard_admin.html",
+        user=current_user,
+        users=users,
+        role_counts=role_counts,
+        roles=ROLES,
+    )
+
+
+@auth_pages_bp.route("/admin/users/<int:user_id>/role", methods=["POST"])
+@login_required
+def admin_update_user_role(user_id):
+    if current_user.role != ROLE_IT_ADMIN:
+        flash("You do not have permission to do that.", "error")
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    user = User.query.get_or_404(user_id)
+    new_role = request.form.get("role", "")
+    try:
+        validate_role(new_role, ROLES)
+    except ValidationError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("auth_pages.admin_dashboard"))
+
+    user.role = new_role
+    db.session.commit()
+    log_action(current_user.id, "user_role_updated", detail=f"user_id={user.id} role={new_role}")
+    flash(f"Updated role for {user.username}.", "success")
+    return redirect(url_for("auth_pages.admin_dashboard"))
+
+
+@auth_pages_bp.route("/admin/users/<int:user_id>/status", methods=["POST"])
+@login_required
+def admin_toggle_user_status(user_id):
+    if current_user.role != ROLE_IT_ADMIN:
+        flash("You do not have permission to do that.", "error")
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash("You cannot change the status of your own account.", "error")
+        return redirect(url_for("auth_pages.admin_dashboard"))
+
+    user.is_active_flag = not user.is_active_flag
+    db.session.commit()
+    log_action(
+        current_user.id,
+        "user_status_updated",
+        detail=f"user_id={user.id} active={user.is_active_flag}",
+    )
+    flash(f"{'Activated' if user.is_active_flag else 'Deactivated'} {user.username}.", "success")
+    return redirect(url_for("auth_pages.admin_dashboard"))
+
+
+@auth_pages_bp.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+@login_required
+def admin_delete_user(user_id):
+    if current_user.role != ROLE_IT_ADMIN:
+        flash("You do not have permission to do that.", "error")
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash("You cannot delete your own account.", "error")
+        return redirect(url_for("auth_pages.admin_dashboard"))
+
+    username = user.username
+    db.session.delete(user)
+    db.session.commit()
+    log_action(current_user.id, "user_deleted", detail=f"deleted user_id={user_id}")
+    flash(f"Deleted user {username}.", "success")
+    return redirect(url_for("auth_pages.admin_dashboard"))
+
+
+@auth_pages_bp.route("/logout", methods=["POST"])
+@login_required
+def logout_page():
+    user_id = current_user.id
+    logout_user()
+    log_action(user_id, "logout")
+    return redirect(url_for("auth_pages.login_page"))

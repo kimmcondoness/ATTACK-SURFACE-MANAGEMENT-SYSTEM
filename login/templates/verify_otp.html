@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify Code - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/auth.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="auth-shell">
+    <section class="auth-console">
+      <div class="console-mark"><span class="dot"></span>ATTACK SURFACE MANAGEMENT </div>
+
+      <div class="console-body">
+        <h1>One step<br>from the console.</h1>
+        <p>We use a one-time email code on top of your password so a leaked
+          credential alone is never enough to get in.</p>
+        <div class="console-stats">
+          <div><span class="n">24/7</span><span class="l">Discovery</span></div>
+          <div><span class="n">MFA</span><span class="l">Enforced</span></div>
+          <div><span class="n">Auth</span><span class="l">Scope only</span></div>
+        </div>
+      </div>
+
+      <div class="console-foot">Codes expire after a few minutes. Never share yours.</div>
+    </section>
+
+    <section class="auth-formside">
+      <div class="auth-card">
+        <p class="kicker">Attack Surface Management</p>
+        <h2>
+          {% if mode == 'signup' %}Verify your email
+          {% elif mode == 'reset' %}Verify it's you
+          {% else %}Enter verification code{% endif %}
+        </h2>
+        <p class="lede">
+          {% if pending_email %}
+            We emailed a 6-digit code to <strong>{{ pending_email }}</strong>.
+          {% else %}
+            We emailed a 6-digit code to your inbox.
+          {% endif %}
+          {% if mode == 'signup' %}Enter it below to activate your account.
+          {% elif mode == 'reset' %}Enter it below to continue resetting your password.
+          {% else %}Enter it below to finish signing in.{% endif %}
+        </p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('auth_pages.signup_verify_page') if mode == 'signup' else (url_for('auth_pages.forgot_password_verify_page') if mode == 'reset' else url_for('auth_pages.verify_otp_page')) }}" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="form-group">
+            <label for="otp_code">Verification code</label>
+            <input type="text" id="otp_code" name="otp_code" class="otp-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" required autofocus>
+          </div>
+
+          <button type="submit" class="btn-success">
+            {% if mode == 'signup' %}Activate account{% elif mode == 'reset' %}Continue{% else %}Verify and sign in{% endif %}
+          </button>
+        </form>
+
+        <form method="POST" action="{{ url_for('auth_pages.resend_signup_otp') if mode == 'signup' else (url_for('auth_pages.resend_reset_otp') if mode == 'reset' else url_for('auth_pages.resend_login_otp')) }}" class="resend-row" data-resend-available-at="{{ (resend_available_at or 0) | int }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" id="resend-btn" class="btn-resend" disabled>Resend code</button>
+        </form>
+
+        <p class="helper-text">Didn't get a code? Check your spam folder, or request a new one above.</p>
+        <p class="auth-links">
+          {% if mode == 'signup' %}
+            <a href="{{ url_for('auth_pages.signup_page') }}">Back to sign up</a>
+          {% elif mode == 'reset' %}
+            <a href="{{ url_for('auth_pages.forgot_password_page') }}">Back to forgot password</a>
+          {% else %}
+            <a href="{{ url_for('auth_pages.login_page') }}">Back to sign in</a>
+          {% endif %}
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/otp-resend.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

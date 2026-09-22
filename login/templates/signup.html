@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create Account - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/auth.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="auth-shell">
+    <section class="auth-console">
+      <div class="console-mark"><span class="dot"></span>ATTACK SURFACE MANAGEMENT </div>
+
+      <div class="console-body">
+        <h1>Get visibility into<br>every asset in scope.</h1>
+        <p>Register an analyst account to track authorized targets,
+          review discovered assets and act on findings as they come in.</p>
+        <div class="console-stats">
+          <div><span class="n">24/7</span><span class="l">Discovery</span></div>
+          <div><span class="n">MFA</span><span class="l">Enforced</span></div>
+          <div><span class="n">Auth</span><span class="l">Scope only</span></div>
+        </div>
+      </div>
+
+      <div class="console-foot">New accounts are limited to authorized personnel only.</div>
+    </section>
+
+    <section class="auth-formside">
+      <div class="auth-card">
+        <p class="kicker">Attack Surface Management</p>
+        <h2>Create account</h2>
+        <p class="lede">Fill in your details to request access.</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('auth_pages.signup_page') }}" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="form-group name-row">
+            <div class="form-group">
+              <label for="first_name">First name</label>
+              <input type="text" id="first_name" name="first_name" value="{{ first_name or '' }}" required autofocus>
+            </div>
+            <div class="form-group">
+              <label for="last_name">Last name</label>
+              <input type="text" id="last_name" name="last_name" value="{{ last_name or '' }}" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" value="{{ username or '' }}" required>
+          </div>
+
+          <div class="form-group">
+            <label for="email">Email</label>
+            <input type="text" id="email" name="email" value="{{ email or '' }}" required>
+          </div>
+
+          <div class="form-group">
+            <label for="account_type">Account type</label>
+            <select id="account_type">
+              <option value="user" {{ 'selected' if role != 'it_admin' else '' }}>User</option>
+              <option value="it_admin" {{ 'selected' if role == 'it_admin' else '' }}>Admin</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="user-role-group" {{ 'hidden' if role == 'it_admin' else '' }}>
+            <label for="role">Role</label>
+            <select id="role" name="role" {{ 'disabled' if role == 'it_admin' else '' }}>
+              <option value="cybersecurity_analyst" {{ 'selected' if role == 'cybersecurity_analyst' or not role else '' }}>Cybersecurity Analyst</option>
+              <option value="threat_intel_analyst" {{ 'selected' if role == 'threat_intel_analyst' else '' }}>Threat Intelligence Analyst</option>
+              <option value="security_team" {{ 'selected' if role == 'security_team' else '' }}>Security Team</option>
+            </select>
+            <p class="field-hint">Cybersecurity Analyst runs scans and manages targets/assets. Threat Intelligence Analyst reviews findings for real-world exploitation risk (CVSS, CISA KEV, public exploits) but doesn't trigger scans.</p>
+          </div>
+
+          <input type="hidden" id="role_admin" name="role" value="it_admin" {{ '' if role == 'it_admin' else 'disabled' }}>
+
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+            <p class="field-hint">At least 10 characters, with a letter and a number.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="confirm_password">Confirm password</label>
+            <input type="password" id="confirm_password" name="confirm_password" required>
+          </div>
+
+          <div class="form-group">
+            <label for="captcha_answer">Verify: {{ captcha_question }}</label>
+            <input type="text" id="captcha_answer" name="captcha_answer" inputmode="numeric" autocomplete="off" required>
+          </div>
+
+          <button type="submit" class="btn-success">Create account</button>
+        </form>
+
+        <p class="auth-links">Already have an account? <a href="{{ url_for('auth_pages.login_page') }}">Sign in</a></p>
+        <p class="auth-links">
+          By creating an account you agree to our
+          <a href="{{ url_for('legal.terms_of_service') }}">Terms of Service</a> and
+          <a href="{{ url_for('legal.privacy_policy') }}">Privacy Policy</a>.
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/signup-role.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

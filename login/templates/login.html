@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign In - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/auth.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="auth-shell">
+    <section class="auth-console">
+      <div class="console-mark"><span class="dot"></span>ATTACK SURFACE MANAGEMENT SYSTEM</div>
+
+      <div class="console-body">
+        <h1>Know your perimeter<br>before someone else does.</h1>
+        <p>Continuous discovery of domains, hosts and services across your
+          authorized scope, with findings triaged the moment they surface.</p>
+        <div class="console-stats">
+          <div><span class="n">24/7</span><span class="l">Discovery</span></div>
+          <div><span class="n">MFA</span><span class="l">Enforced</span></div>
+          <div><span class="n">Auth</span><span class="l">Scope only</span></div>
+        </div>
+      </div>
+
+      <div class="console-foot">Access is logged and limited to authorized personnel.</div>
+    </section>
+
+    <section class="auth-formside">
+      <div class="auth-card">
+        <p class="kicker">Attack Surface Management</p>
+        <h2>Sign in</h2>
+        <p class="lede">Enter your credentials to continue.</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('auth_pages.login_page') }}" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" value="{{ username or '' }}" required autofocus>
+          </div>
+
+          <div class="form-group">
+            <label for="password">Password</label>
+            <div class="password-field">
+              <input type="password" id="password" name="password" required>
+              <button type="button" class="btn-toggle-password" data-target="password" aria-label="Show password">Show</button>
+            </div>
+            <p class="field-hint"><a href="{{ url_for('auth_pages.forgot_password_page') }}">Forgot password?</a></p>
+          </div>
+
+          <div class="form-group">
+            <label for="captcha_answer">Verify: {{ captcha_question }}</label>
+            <input type="text" id="captcha_answer" name="captcha_answer" inputmode="numeric" autocomplete="off" required>
+          </div>
+
+          <button type="submit" class="btn-success">Sign In</button>
+        </form>
+
+        <p class="helper-text">A one-time verification code will be emailed to you after your password is accepted.</p>
+        <p class="auth-links">Don't have an account? <a href="{{ url_for('auth_pages.signup_page') }}">Sign up</a></p>
+        <p class="auth-links">
+          <a href="{{ url_for('legal.privacy_policy') }}">Privacy Policy</a> ·
+          <a href="{{ url_for('legal.terms_of_service') }}">Terms of Service</a>
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/password-toggle.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

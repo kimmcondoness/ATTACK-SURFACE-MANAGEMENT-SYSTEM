@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/auth.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="legal-shell">
+    <header class="legal-topbar">
+      <div class="brand"><span class="dot"></span>ATTACK SURFACE MANAGEMENT</div>
+      <a href="{{ url_for('auth_pages.login_page') }}">Back to sign in</a>
+    </header>
+
+    <main class="legal-main">
+      <p class="kicker">Legal</p>
+      <h1>PRIVACY POLICY</h1>
+      <p class="updated">Last updated: 17 August 2026</p>
+
+      <p>
+        This Privacy Policy explains what information the Attack Surface Management
+        system ("ASM", "we", "the system") collects from registered users, why we
+        collect it, and how it is protected. This project is operated as an academic
+        prototype for authorized security testing and asset-visibility purposes only.
+      </p>
+
+      <h2>INFORMATION WE COLLECT</h2>
+      <p>When you create an account or use the system, we store:</p>
+      <ul>
+        <li><strong>Account details:</strong> first name, last name, username, email address, and a securely hashed password (we never store your plaintext password).</li>
+        <li><strong>Authentication data:</strong> temporary CAPTCHA answers and one-time email verification codes, held only for the few minutes needed to complete sign-in or sign-up, then discarded.</li>
+        <li><strong>Scan and target data:</strong> domains you mark as authorized for scanning, and the assets, ports, and vulnerabilities discovered against them.</li>
+        <li><strong>Audit logs:</strong> a record of security-relevant events on your account (login attempts, MFA verification, password changes) used to detect abuse and support incident investigation.</li>
+        <li><strong>Technical data:</strong> your IP address is used transiently to enforce rate limits on login/sign-up attempts and is not stored long-term as part of your profile.</li>
+      </ul>
+
+      <h2>HOW WE USE THIS INFORMATION</h2>
+      <ul>
+        <li>To authenticate you and keep your account secure (password hashing, CAPTCHA, email-based multi-factor authentication).</li>
+        <li>To operate the core function of the service: discovering and tracking assets and vulnerabilities on domains you have explicitly authorized.</li>
+        <li>To detect suspicious activity, such as repeated failed logins, through audit logging and rate limiting.</li>
+        <li>To send you one-time verification codes by email during sign-up and login.</li>
+      </ul>
+      <p>We do not sell, rent, or share your personal data with third parties for marketing purposes. We do not use advertising or analytics trackers.</p>
+
+      <h2>COOKIES</h2>
+      <p>We use only strictly necessary cookies:</p>
+      <ul>
+        <li>A <strong>session cookie</strong> to keep you signed in.</li>
+        <li>A <strong>CSRF protection</strong> mechanism to prevent forged form submissions.</li>
+      </ul>
+      <p>
+        These cookies are required for the system to function and are not used for tracking or advertising.
+        A separate browser-local flag (not a cookie) remembers that you've dismissed the cookie notice.
+      </p>
+
+      <h2>DATA RETENTION</h2>
+      <p>
+        Account and scan data is retained for as long as your account is active. Audit
+        log entries are retained to support security investigations. You may request
+        deletion of your account and associated data by contacting a system administrator.
+      </p>
+
+      <h2>DATA SECURITY</h2>
+      <p>
+        Passwords are hashed with bcrypt and never stored or logged in plaintext. All
+        authenticated pages are protected by role-based access control, CSRF protection,
+        and rate limiting on authentication endpoints. Scans are only ever run against
+        targets you have explicitly marked as authorized.
+      </p>
+
+      <h2>YOUR RIGHTS</h2>
+      <p>
+        You may access, correct, or request deletion of your personal data at any time
+        by contacting a system administrator. If you believe your account has been
+        compromised, contact an administrator immediately so it can be disabled.
+      </p>
+
+      <h2>CHANGES TO THIS POLICY</h2>
+      <p>
+        This policy may be updated as the system evolves. Material changes will be
+        reflected by updating the "Last updated" date above.
+      </p>
+    </main>
+  </div>
+</body>
+</html>

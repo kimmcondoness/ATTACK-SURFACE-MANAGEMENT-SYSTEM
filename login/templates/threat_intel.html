@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Threat Intelligence - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/workspace.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="ws-shell">
+    {% include "_workspace_sidebar.html" %}
+
+    <main class="ws-main">
+      <div class="ws-topbar">
+        <p class="kicker">Threat Intelligence</p>
+        <h1>Real-world exploitation risk</h1>
+        <p>
+          Every open/in-progress finding across all authorized targets, prioritized by real CVSS score,
+          CISA KEV (confirmed actively exploited) status, and public exploit availability &mdash; not just a
+          severity label. See <a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">CISA KEV</a>
+          and <a href="https://cve.circl.lu/" target="_blank" rel="noopener">cve.circl.lu</a> for the underlying sources.
+        </p>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <div class="ws-stats">
+        <div class="ws-stat">
+          <span class="n">{{ stat_values.findings }}</span><span class="l">Live findings</span>
+          <div class="stat-bar"><div class="stat-bar-fill" data-pct="{{ stat_bar_pct.findings }}"></div></div>
+        </div>
+        <div class="ws-stat stat-security">
+          <span class="n">{{ stat_values.kev }}</span><span class="l">In CISA KEV</span>
+          <div class="stat-bar"><div class="stat-bar-fill" data-pct="{{ stat_bar_pct.kev }}"></div></div>
+        </div>
+        <div class="ws-stat stat-threatintel">
+          <span class="n">{{ stat_values.exploitable }}</span><span class="l">Public exploit known</span>
+          <div class="stat-bar"><div class="stat-bar-fill" data-pct="{{ stat_bar_pct.exploitable }}"></div></div>
+        </div>
+        <div class="ws-stat">
+          <span class="n">{{ stat_values.avg_cvss }}</span><span class="l">Avg CVSS (scored findings)</span>
+          <div class="stat-bar"><div class="stat-bar-fill" data-pct="{{ stat_bar_pct.avg_cvss }}"></div></div>
+        </div>
+      </div>
+
+      {% if kev_matches %}
+      <section class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Your exposure matched against CISA KEV</h2>
+          <span>{{ kev_matches|length }} urgent</span>
+        </div>
+        <p class="ws-report-summary">
+          These are your own findings whose CVE is confirmed by CISA to be actively exploited in the wild right now.
+          Treat these as top priority regardless of severity label.
+        </p>
+        <table>
+          <thead>
+            <tr><th>CVE</th><th>Target</th><th>Title</th><th>CVSS</th></tr>
+          </thead>
+          <tbody>
+            {% for v in kev_matches %}
+            <tr>
+              <td class="text-mono"><a href="https://nvd.nist.gov/vuln/detail/{{ v.cve }}" target="_blank" rel="noopener">{{ v.cve }}</a></td>
+              <td class="text-mono">{{ target_map.get(asset_target_map.get(v.asset_id), 'unknown') }}</td>
+              <td>{{ v.title }}</td>
+              <td class="text-mono">{{ v.cvss_score if v.cvss_score is not none else '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endif %}
+
+      <section class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Prioritized findings</h2>
+          <span>{{ prioritized_total }} total</span>
+        </div>
+        {% if prioritized %}
+        <table>
+          <thead>
+            <tr><th>Priority</th><th>CVE</th><th>Severity</th><th>Target</th><th>Title</th><th>Flags</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            {% for v in prioritized %}
+            <tr>
+              <td class="text-mono">{{ priority(v) }}</td>
+              <td class="text-mono">
+                {% if v.cve %}<a href="https://nvd.nist.gov/vuln/detail/{{ v.cve }}" target="_blank" rel="noopener">{{ v.cve }}</a>{% else %}&mdash;{% endif %}
+              </td>
+              <td><span class="pill pill-{{ v.severity }}">{{ v.severity }}</span></td>
+              <td class="text-mono">{{ target_map.get(asset_target_map.get(v.asset_id), 'unknown') }}</td>
+              <td>{{ v.title }}</td>
+              <td>
+                {% if v.kev %}<span class="pill pill-failed">KEV</span>{% endif %}
+                {% if v.exploit_available %}<span class="pill pill-medium">Exploit</span>{% endif %}
+              </td>
+              <td>
+                <form method="POST" action="{{ url_for('threat_intel.update_status', vuln_id=v.id) }}" class="row-actions">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <select name="status" class="role-select">
+                    {% for s in status_choices %}
+                    <option value="{{ s }}" {% if s == v.status %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit" class="btn-mini btn-mini-save">Save</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if prioritized_total > prioritized|length %}
+        <p class="empty-row">Showing the top {{ prioritized|length }} of {{ prioritized_total }} by priority.</p>
+        {% endif %}
+        {% else %}
+        <p class="empty-row">No live findings across any authorized target yet.</p>
+        {% endif %}
+      </section>
+
+      <section class="ws-panel" style="margin-bottom: 0;">
+        <div class="ws-panel-head">
+          <h2>CISA KEV catalog &mdash; recent additions</h2>
+          <span>General awareness, not limited to your assets</span>
+        </div>
+        {% if kev_feed %}
+        <table>
+          <thead>
+            <tr><th>CVE</th><th>Vendor / product</th><th>Added</th><th>Action due</th></tr>
+          </thead>
+          <tbody>
+            {% for entry in kev_feed %}
+            <tr>
+              <td class="text-mono"><a href="https://nvd.nist.gov/vuln/detail/{{ entry.cveID }}" target="_blank" rel="noopener">{{ entry.cveID }}</a></td>
+              <td>{{ entry.vendorProject }} &mdash; {{ entry.product }}</td>
+              <td class="text-mono">{{ entry.dateAdded }}</td>
+              <td class="text-mono">{{ entry.dueDate or '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">Could not reach the CISA KEV feed right now.</p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/workspace-charts.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Dashboard - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/workspace.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="ws-shell">
+    {% include "_workspace_sidebar.html" %}
+
+    <main class="ws-main">
+      <div class="ws-topbar">
+        <p class="kicker">Dashboard</p>
+        <h1>Scan activity &amp; findings</h1>
+        <p>Full detail on scope, scan activity and findings across the targets assigned to you.</p>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form method="GET" id="target-filter-form" class="target-filter">
+        <label for="target-filter">Viewing:</label>
+        <select name="target_id" id="target-filter">
+          <option value="" {{ 'selected' if not selected_target_id else '' }}>All targets ({{ targets|length }})</option>
+          {% for t in targets %}
+          <option value="{{ t.id }}" {{ 'selected' if t.id == selected_target_id else '' }}>{{ t.domain }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="chart-range-btn">Go</button>
+        {% if chart_range != '12m' %}<input type="hidden" name="range" value="{{ chart_range }}">{% endif %}
+        {% if selected_target_id %}
+        <a href="{{ url_for('auth_pages.workspace_dashboard') }}{{ '?range=' + chart_range if chart_range != '12m' else '' }}" class="target-filter-clear">Clear filter</a>
+        {% endif %}
+      </form>
+
+      <section class="ws-panel scan-panel" id="scan-panel">
+        <div class="scan-panel-head">
+          <span class="scan-panel-icon">&#9673;</span>
+          <div>
+            <h2>Scan a target</h2>
+            <p>Run subdomain enumeration, port discovery and vulnerability scanning against an authorized domain or URL. Uses Subfinder, Nmap and Nuclei when installed, and falls back to clearly-labeled mock data otherwise.</p>
+          </div>
+        </div>
+        <form id="scan-form" class="scan-form" autocomplete="off">
+          <input type="text" id="scan-input" name="domain_or_url" placeholder="example.com or https://example.com" required>
+          <button type="submit" id="scan-run-btn" class="btn-scan btn-scan-run">Run</button>
+          <button type="button" id="scan-pause-btn" class="btn-scan" disabled>Pause</button>
+          <button type="button" id="scan-stop-btn" class="btn-scan btn-scan-stop" disabled>Stop</button>
+        </form>
+        <p id="scan-status-line" class="scan-status-line">Idle. Enter a domain or URL and click Run.</p>
+      </section>
+
+      <div class="ws-stats" id="live-stats">
+        <div class="ws-stat">
+          <span class="n" id="stat-targets">{{ scoped_stat_values.targets }}</span><span class="l">Your targets</span>
+          <div class="stat-bar"><div class="stat-bar-fill" id="stat-targets-bar" data-pct="{{ stat_bar_pct.targets }}"></div></div>
+        </div>
+        <div class="ws-stat">
+          <span class="n" id="stat-assets">{{ scoped_stat_values.assets }}</span><span class="l">Assets found</span>
+          <div class="stat-bar"><div class="stat-bar-fill" id="stat-assets-bar" data-pct="{{ stat_bar_pct.assets }}"></div></div>
+        </div>
+        <div class="ws-stat">
+          <span class="n" id="stat-vulnerable">{{ vulnerable_count }}</span><span class="l">Vulnerable</span>
+          <div class="stat-bar"><div class="stat-bar-fill" id="stat-vulnerable-bar" data-pct="{{ stat_bar_pct.vulnerable }}"></div></div>
+        </div>
+        <div class="ws-stat">
+          <span class="n" id="stat-needsreview">{{ needs_review_count }}</span><span class="l">Needs review</span>
+          <div class="stat-bar"><div class="stat-bar-fill" id="stat-needsreview-bar" data-pct="{{ stat_bar_pct.needsreview }}"></div></div>
+        </div>
+        <div class="ws-stat">
+          <span class="n" id="stat-risk">{{ scoped_stat_values.risk }}</span><span class="l">Risk score</span>
+          <div class="stat-bar"><div class="stat-bar-fill" id="stat-risk-bar" data-pct="{{ stat_bar_pct.risk }}"></div></div>
+        </div>
+      </div>
+
+      <div class="chart-range-picker" id="chart-range-picker" data-range="{{ chart_range }}">
+        <span class="chart-range-label">Range:</span>
+        {% for r in chart_ranges %}
+        <button type="button" class="chart-range-btn {{ 'active' if r == chart_range else '' }}" data-range-value="{{ r }}">{{ r|upper }}</button>
+        {% endfor %}
+      </div>
+
+      <div class="ws-charts">
+        <section class="ws-panel">
+          <div class="ws-panel-head">
+            <h2>Scan activity</h2>
+            <span id="scan-chart-range-label">by status &middot; live</span>
+          </div>
+          <div class="donut-panel">
+            <div class="donut-wrap">
+              <canvas id="scan-donut" width="150" height="150"></canvas>
+              <div class="donut-total"><span id="scan-donut-total">0</span></div>
+            </div>
+            <ul class="donut-legend">
+              <li><span class="legend-dot" style="background:var(--accent);"></span>Completed <b id="leg-scan-completed">0</b></li>
+              <li><span class="legend-dot" style="background:var(--crit);"></span>Failed <b id="leg-scan-failed">0</b></li>
+              <li><span class="legend-dot" style="background:var(--muted);"></span>Pending / running <b id="leg-scan-other">0</b></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="ws-panel">
+          <div class="ws-panel-head">
+            <h2>Finding trends</h2>
+            <span id="finding-chart-range-label">by severity &middot; live</span>
+          </div>
+          <div class="donut-panel">
+            <div class="donut-wrap">
+              <canvas id="finding-donut" width="150" height="150"></canvas>
+              <div class="donut-total"><span id="finding-donut-total">0</span></div>
+            </div>
+            <ul class="donut-legend">
+              <li><span class="legend-dot" style="background:var(--crit);"></span>Critical <b id="leg-sev-critical">0</b></li>
+              <li><span class="legend-dot" style="background:var(--high);"></span>High <b id="leg-sev-high">0</b></li>
+              <li><span class="legend-dot" style="background:var(--med);"></span>Medium <b id="leg-sev-medium">0</b></li>
+              <li><span class="legend-dot" style="background:var(--low);"></span>Low <b id="leg-sev-low">0</b></li>
+            </ul>
+          </div>
+        </section>
+      </div>
+
+      <script id="chart-initial-data" type="application/json">
+        {
+          "scanStatusTotals": {"completed": {{ scan_totals.completed }}, "failed": {{ scan_totals.failed }}, "other": {{ scan_totals.other }}},
+          "severityTotals": {"critical": {{ severity_totals.critical }}, "high": {{ severity_totals.high }}, "medium": {{ severity_totals.medium }}, "low": {{ severity_totals.low }}}
+        }
+      </script>
+
+      <section id="targets" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Your targets</h2>
+          <span>{{ targets|length }} total</span>
+        </div>
+        {% if targets %}
+        <table>
+          <thead>
+            <tr><th>Domain</th><th>Authorized</th><th>Assets</th><th>Risk</th></tr>
+          </thead>
+          <tbody>
+            {% for t in targets %}
+            <tr>
+              <td class="text-mono">{{ t.domain }}</td>
+              <td>
+                {% if t.authorized %}<span class="pill pill-active">Authorized</span>
+                {% else %}<span class="pill pill-inactive">Pending</span>{% endif %}
+              </td>
+              <td>{{ t.assets|length }}</td>
+              <td class="text-mono">{{ target_risk.get(t.id, 0) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">No targets assigned to you yet. Ask an admin to authorize one.</p>
+        {% endif %}
+      </section>
+
+      <section id="assets" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Assets (subdomains, IPs &amp; web apps){% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ assets|length }} total</span>
+        </div>
+        {% if assets %}
+        <table>
+          <thead>
+            <tr><th>Subdomain</th><th>IP address</th><th>URL</th><th>Target</th><th>Discovered</th></tr>
+          </thead>
+          <tbody>
+            {% for a in assets %}
+            <tr>
+              <td class="text-mono">{{ a.subdomain or '-' }}</td>
+              <td class="text-mono">{{ a.ip_address or '-' }}</td>
+              <td class="text-mono">{{ a.url or '-' }}</td>
+              <td class="text-mono">{{ target_map.get(a.target_id, 'unknown') }}</td>
+              <td class="text-mono">{{ a.discovery_date.strftime('%Y-%m-%d') if a.discovery_date else '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">No assets discovered yet. Run asset discovery on one of your targets.</p>
+        {% endif %}
+      </section>
+
+      <section id="network" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Open ports &amp; public services{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ ports|length }} total</span>
+        </div>
+        {% if ports %}
+        <table>
+          <thead>
+            <tr><th>Asset</th><th>Port</th><th>Protocol</th><th>Service</th><th>State</th></tr>
+          </thead>
+          <tbody>
+            {% for p in ports %}
+            <tr>
+              <td class="text-mono">{{ asset_map.get(p.asset_id, 'unknown') }}</td>
+              <td class="text-mono">{{ p.port }}</td>
+              <td class="text-mono">{{ p.protocol }}</td>
+              <td>{{ p.service_name or '-' }}{% if p.service_version %} <span class="text-mono">({{ p.service_version }})</span>{% endif %}</td>
+              <td>
+                {% if p.state == 'open' %}<span class="pill pill-active">Open</span>
+                {% else %}<span class="pill pill-inactive">{{ p.state }}</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">No open ports or services discovered yet. Run port discovery on one of your targets.</p>
+        {% endif %}
+      </section>
+
+      <section id="dorking" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Google Dorking (OSINT){% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ dork_count }} queries</span>
+        </div>
+        {% if not selected_target_id %}
+        <p class="empty-row">Select a specific target above to generate Google dork queries for it.</p>
+        {% else %}
+        <p class="ws-report-summary">
+          Each link opens a real Google search in a new tab &mdash; there is no automated scraping (that would violate
+          Google's Terms of Service and get an IP blocked). Review the results yourself and add anything genuinely
+          exposed as a finding. Only run these against domains you're authorized to assess.
+        </p>
+        {% for group in dork_categories %}
+        <details class="dork-group">
+          <summary>{{ group.category }} <span class="count">{{ group.queries|length }}</span></summary>
+          <ul class="dork-list">
+            {% for item in group.queries %}
+            <li>
+              <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.label }}</a>
+              <span class="text-mono dork-query">{{ item.query }}</span>
+              <p>{{ item.description }}</p>
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endfor %}
+        {% endif %}
+      </section>
+
+      <section id="activity" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Scan history{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ recent_scans|length }} shown</span>
+        </div>
+        {% if recent_scans %}
+        <table>
+          <thead>
+            <tr><th>When</th><th>Target</th><th>Type</th><th>Status</th><th>Source</th><th>Result</th></tr>
+          </thead>
+          <tbody>
+            {% for s in recent_scans %}
+            <tr>
+              <td class="text-mono">{{ s.started_at.strftime('%Y-%m-%d %H:%M') if s.started_at else '-' }}</td>
+              <td class="text-mono">{{ target_map.get(s.target_id, 'unknown') }}</td>
+              <td>{{ s.scan_type.replace('_', ' ') }}</td>
+              <td>
+                {% if s.status == 'completed' %}<span class="pill pill-completed">Completed</span>
+                {% elif s.status == 'failed' %}<span class="pill pill-failed">Failed</span>
+                {% elif s.status == 'stopped' %}<span class="pill pill-inactive">Stopped</span>
+                {% elif s.status == 'paused' %}<span class="pill pill-running">Paused</span>
+                {% else %}<span class="pill pill-running">{{ s.status }}</span>{% endif %}
+              </td>
+              <td>
+                {% if s.source == 'mock' %}<span class="pill pill-inactive">Mock</span>
+                {% elif s.source == 'real' %}<span class="pill pill-active">Real</span>
+                {% else %}-{% endif %}
+              </td>
+              <td class="scan-history-summary">{{ s.result_summary or '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if recent_scans|length >= 200 %}
+        <p class="empty-row">Showing the most recent 200 scans for this view.</p>
+        {% endif %}
+        {% else %}
+        <p class="empty-row">No scans have been run yet{% if selected_target_id %} for this target{% endif %}.</p>
+        {% endif %}
+      </section>
+
+      <section id="findings" class="ws-panel" style="margin-bottom: 0;">
+        <div class="ws-panel-head" id="reports">
+          <h2>Findings &amp; CVE report{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ findings|length }} total</span>
+        </div>
+        <p class="ws-report-summary">
+          Export findings across {{ scoped_stat_values.targets }} target(s) — {{ findings|length }} rows ·
+          {{ vulnerable_count }} vulnerable · {{ needs_review_count }} needs review.
+        </p>
+        <div class="ws-export-actions">
+          <a class="btn-ghost" href="{{ url_for('auth_pages.export_findings_json', target_id=selected_target_id) }}">Export JSON</a>
+          <a class="btn-ghost" href="{{ url_for('auth_pages.export_findings_csv', target_id=selected_target_id) }}">Export CSV</a>
+          <a class="btn-ghost" href="{{ url_for('auth_pages.export_findings_markdown', target_id=selected_target_id) }}">Export Markdown</a>
+        </div>
+
+        <div class="report-generate">
+          {% if selected_target_id %}
+          <form method="POST" action="{{ url_for('workspace_reports.generate_report') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="target_id" value="{{ selected_target_id }}">
+            <input type="hidden" name="report_type" value="pdf">
+            <button type="submit" class="btn-scan btn-scan-run">Generate PDF report</button>
+          </form>
+          <form method="POST" action="{{ url_for('workspace_reports.generate_report') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="target_id" value="{{ selected_target_id }}">
+            <input type="hidden" name="report_type" value="csv">
+            <button type="submit" class="btn-scan">Generate CSV report</button>
+          </form>
+          {% else %}
+          <p class="ws-report-summary" style="margin: 0;">Select a specific target above to generate a formatted PDF or CSV report for it.</p>
+          {% endif %}
+        </div>
+
+        {% if selected_target_id and target_reports %}
+        <div class="report-history">
+          <p class="ws-report-summary" style="margin: 0 0 0.5rem;">Previously generated reports for {{ target_map.get(selected_target_id) }}:</p>
+          <ul class="report-history-list">
+            {% for r in target_reports %}
+            <li>
+              <a href="{{ url_for('workspace_reports.download_report', report_id=r.id) }}">{{ r.report_type|upper }}</a>
+              <span class="text-mono">{{ r.generated_at.strftime('%Y-%m-%d %H:%M') if r.generated_at else '-' }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
+        {% if findings %}
+        <table>
+          <thead>
+            <tr><th>CVE</th><th>Severity</th><th>Title</th><th>Status</th><th>Discovered</th></tr>
+          </thead>
+          <tbody>
+            {% for f in findings[:25] %}
+            <tr>
+              <td class="text-mono">
+                {% if f.cve %}<a href="https://nvd.nist.gov/vuln/detail/{{ f.cve }}" target="_blank" rel="noopener">{{ f.cve }}</a>
+                {% else %}&mdash;{% endif %}
+              </td>
+              <td><span class="pill pill-{{ f.severity }}">{{ f.severity }}</span></td>
+              <td>{{ f.title }}</td>
+              <td><span class="pill pill-{{ f.status }}">{{ f.status.replace('_', ' ') }}</span></td>
+              <td class="text-mono">{{ f.discovered_at.strftime('%Y-%m-%d') if f.discovered_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if findings|length > 25 %}
+        <p class="empty-row">Showing 25 of {{ findings|length }} rows — use an export above for the full list.</p>
+        {% endif %}
+        {% else %}
+        <p class="empty-row">No findings recorded for your targets yet.</p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/workspace-charts.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/target-filter.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/vendor/chart.umd.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/live-scan.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

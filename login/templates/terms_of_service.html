@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terms of Service - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/auth.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="legal-shell">
+    <header class="legal-topbar">
+      <div class="brand"><span class="dot"></span>ATTACK SURFACE MANAGEMENT</div>
+      <a href="{{ url_for('auth_pages.login_page') }}">Back to sign in</a>
+    </header>
+
+    <main class="legal-main">
+      <p class="kicker">Legal</p>
+      <h1>TERMS OF SERVICE</h1>
+      <p class="updated">Last updated: 17 August 2026</p>
+
+      <p>
+        These Terms of Service ("Terms") govern your use of the Attack Surface
+        Management system ("ASM", "the system"). By creating an account or using
+        the system, you agree to these Terms. If you do not agree, do not use the system.
+      </p>
+
+      <h2>AUTHORIZED USE ONLY</h2>
+      <p>
+        ASM is a security scanning and asset-discovery tool. You may only submit
+        domains, IP addresses, or other assets for scanning that you own or have
+        explicit, documented authorization to test. Scanning any target without
+        proper authorization is strictly prohibited and may be unlawful under
+        computer misuse legislation in your jurisdiction.
+      </p>
+      <p>
+        Marking a target as "authorized" in this system is a statement, made by
+        you, that you hold that authorization. The system will refuse to run scans
+        against targets not marked authorized, but this is a safeguard, not a
+        substitute for your own legal responsibility to obtain real authorization.
+      </p>
+
+      <h2>ACCOUNT RESPONSIBILITIES</h2>
+      <ul>
+        <li>You are responsible for keeping your password and verification codes confidential.</li>
+        <li>You must provide accurate registration information.</li>
+        <li>You are responsible for all activity that occurs under your account.</li>
+        <li>Notify an administrator immediately if you suspect unauthorized access to your account.</li>
+      </ul>
+
+      <h2>PROHIBITED ACTIVITY</h2>
+      <ul>
+        <li>Scanning, probing, or attacking any target without proper authorization.</li>
+        <li>Attempting to bypass authentication, rate limiting, or access controls.</li>
+        <li>Uploading malicious content or attempting to disrupt the availability of the system.</li>
+        <li>Sharing your account credentials with others.</li>
+      </ul>
+
+      <h2>NO WARRANTY</h2>
+      <p>
+        This system is provided as an academic/educational prototype "as is,"
+        without warranty of any kind, express or implied, including but not
+        limited to accuracy, completeness, or fitness for a particular purpose.
+        Vulnerability findings and risk scores are best-effort and should not be
+        the sole basis for security decisions on production systems.
+      </p>
+
+      <h2>LIMITATION OF LIABILITY</h2>
+      <p>
+        To the fullest extent permitted by law, the operators of this system are
+        not liable for any indirect, incidental, or consequential damages arising
+        from your use of the system, including damages resulting from
+        unauthorized scanning activity carried out by a user of this system.
+      </p>
+
+      <h2>ACCOUNT SUSPENSION AND TERMINATION</h2>
+      <p>
+        We may suspend or disable an account that violates these Terms, including
+        attempts to scan unauthorized targets, abuse of the authentication system,
+        or activity that disrupts other users.
+      </p>
+
+      <h2>CHANGES TO THESE TERMS</h2>
+      <p>
+        These Terms may be updated as the system evolves. Continued use of the
+        system after changes are posted constitutes acceptance of the revised Terms.
+      </p>
+
+      <h2>CONTACT</h2>
+      <p>Questions about these Terms can be directed to a system administrator.</p>
+    </main>
+  </div>
+</body>
+</html>
