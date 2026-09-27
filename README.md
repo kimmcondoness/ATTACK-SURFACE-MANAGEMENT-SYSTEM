@@ -40,7 +40,7 @@ Examples:
 
 # Intended Users
 
-The system supports four roles.
+The system supports three roles. Each owns a different question, and none can do another's job.
 
 ## Cybersecurity Analyst
 
@@ -48,11 +48,13 @@ Responsible for
 
 - monitoring assets
 - performing scans
-- analyzing vulnerabilities
-- reviewing reports
+- triaging findings (open, in progress, resolved, false positive)
+- generating technical scan reports (PDF/CSV)
 
 Operational: owns targets, triggers Subfinder/Nmap/Nuclei scans, works from
-the Dashboard scoped to their own authorized targets.
+the Dashboard and inventory scoped to their own authorized targets. Asks
+"what is exposed, and what did the scanners find?" and is the only role that
+changes finding status (besides the IT Administrator).
 
 ---
 
@@ -68,8 +70,10 @@ Responsible for
 - tracking general threat landscape awareness (recent CISA KEV additions)
   independent of the organization's own current findings
 
-Analytical, not operational: does not create targets or trigger scans --
-works from the dedicated Threat Intelligence page instead of the Dashboard.
+Analytical, read-only: does not create targets, trigger scans, change finding
+status or generate scan reports. Has no access to the Dashboard or inventory --
+works only from the Threat Intelligence page and exports a Threat Briefing CSV
+(org-wide, prioritized). Asks "which findings are actually being exploited?".
 See `services/risk_service.py` (`vulnerability_priority`), `services/kev_service.py`,
 and `services/cve_lookup.py` for the scoring methodology.
 
@@ -83,17 +87,6 @@ Responsible for
 - maintaining users
 - configuring scans
 - monitoring dashboard
-
----
-
-## Security Team
-
-Responsible for
-
-- reviewing risks
-- monitoring attack surface
-- responding to findings
-- reviewing reports
 
 ---
 
@@ -164,6 +157,16 @@ Purpose
 
 - OSINT discovery
 - identify publicly indexed assets
+- confirm which exposures are real
+
+The dashboard lists 76 curated dork queries per target (links that open in Google).
+Each scan also runs a **dork exposure check** (`scanner/exposure_scanner.py`): it
+requests the matching paths on the host itself (`/.env`, `/.git/config`, backups, SQL
+dumps, debug pages, admin tools, public buckets and more) and only records a finding
+when the response *content* matches, so catch-all pages and login redirects are not
+counted. Confirmed exposures appear as `[Dork]` findings with a risk score and
+mitigation steps, in the Findings page and both report formats. Exposed secrets are
+never copied out; evidence is a status, a size and variable names only.
 
 Google Dorking is only used on **authorized organization assets**.
 
@@ -191,6 +194,9 @@ Store Services
     ↓
 Vulnerability Scan
 (Nuclei)
+    ↓
+Dork Exposure Check
+(direct requests)
     ↓
 Risk Analysis
     ↓
@@ -278,6 +284,7 @@ Display
 - Recent Findings
 - Charts
 - Asset Summary
+- Google Dorking (curated queries per target, with confirmed exposures flagged)
 
 ---
 
@@ -313,7 +320,10 @@ Display
 Functions
 
 - Start Asset Discovery
+- Start Port Discovery
 - Start Vulnerability Scan
+- Start Dork Exposure Check (confirms Google dork exposures directly on the host)
+- Pause / Resume / Stop a running scan
 - View Scan Progress
 - Scan History
 
@@ -321,14 +331,27 @@ Functions
 
 ## Vulnerabilities
 
+Also called Findings & CVE Report -- one page combining the findings list,
+exports and PDF/CSV report generation.
+
 Display
 
 - Severity
 - CVE
+- CVSS Score
+- Risk Score (CVSS, or a severity weight when there is no CVE, boosted for a
+  CISA KEV match or a known public exploit)
 - Description
 - Affected Asset
-- Recommendation
+- Recommendation / Mitigation Steps
 - Status
+
+Functions
+
+- Set Triage status: Open, In Progress, Resolved, False Positive
+  (Cybersecurity Analyst and IT Administrator only)
+- Select and delete findings (e.g. ones with no confirmed CVE)
+- Export findings as JSON, CSV or Markdown
 
 Filters
 
@@ -349,9 +372,33 @@ Generate
 Report contains
 
 - Assets
-- Vulnerabilities
+- Vulnerabilities, with CVSS and risk score
+- Mitigation steps and a suggested timeframe per finding
 - Risk Summary
 - Statistics
+
+Report history shows each report's Read / Unread state, per user.
+
+---
+
+## Threat Intelligence
+
+Only Threat Intelligence Analyst and IT Administrator
+
+Display
+
+- Live findings across every authorized target, org-wide (not limited to
+  targets the viewer personally scanned)
+- CISA KEV matches
+- Prioritized findings, ranked by real CVSS score, CISA KEV status and
+  public exploit availability
+- Recent CISA KEV catalog additions
+
+Functions
+
+- Export a Threat Briefing (CSV)
+
+Read-only: cannot create targets, run scans, or change finding status.
 
 ---
 
@@ -418,7 +465,7 @@ Roles
 
 - IT Administrator
 - Cybersecurity Analyst
-- Security Team
+- Threat Intelligence Analyst
 
 ---
 
