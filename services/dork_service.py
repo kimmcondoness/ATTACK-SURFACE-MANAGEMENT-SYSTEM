@@ -8,6 +8,13 @@ long-standing reference catalog for this recon technique, with queries
 drawn from well-documented public dork patterns for each category and
 scoped to the target with `site:{domain}`.
 
+The later categories (secrets, backups, debug endpoints, dev tools, CMS
+fingerprints, third-party leak sources) are hand-picked and rewritten from
+patterns that also appear in the open-source X-osint project's
+google_Dorks.txt (https://github.com/TermuxHackz/X-osint, GPL-3.0, itself a
+dump of GHDB entries). Only individual query patterns were adapted; each is
+re-scoped to the target domain and no X-osint code is included.
+
 There is no ToS-compliant way to scrape Google's results programmatically
 (scraping search result pages violates Google's Terms of Service and gets
 IPs rate-limited/blocked quickly), so this deliberately stays a "generate
@@ -16,6 +23,7 @@ rather than an automated scanner -- the same way the GHDB itself is just
 a catalog of queries, not a scraper.
 """
 
+import re
 from urllib.parse import quote_plus
 
 # Each entry's `query` is a template with {domain} substituted in. Group
@@ -126,19 +134,123 @@ _DORK_TEMPLATES = [
         ],
     },
     {
+        "category": "Secrets and config exposure",
+        "queries": [
+            ("Laravel .env files", 'site:{domain} ext:env intext:"APP_KEY=" OR intext:"APP_DEBUG="', "A Laravel .env holds the app key and usually database and mail credentials."),
+            ("Database passwords in .env", 'site:{domain} ext:env intext:"DB_PASSWORD"', "Environment files carrying database credentials in plain text."),
+            ("Docker Compose secrets", 'site:{domain} ext:yml intext:"MYSQL_ROOT_PASSWORD" OR intext:"POSTGRES_PASSWORD"', "docker-compose files with database passwords baked in."),
+            ("web.config credentials", 'site:{domain} inurl:web.config ext:config intext:"password"', "IIS/ASP.NET config files with connection strings or credentials."),
+            ("wp-config saved as text", 'site:{domain} inurl:wp-config (ext:txt OR ext:bak OR ext:old)', "Copies of wp-config.php that the server hands out as plain text, exposing DB credentials and salts."),
+            ("Jenkins config hashes", 'site:{domain} inurl:config.xml ext:xml intext:"passwordHash"', "Jenkins configuration files containing user password hashes."),
+            ("Exposed .git repository", 'site:{domain} inurl:".git" intitle:"index of"', "A reachable .git folder lets anyone download the full source and its history."),
+            ("Exposed .svn metadata", 'site:{domain} inurl:".svn" intitle:"index of"', "Subversion metadata that can be used to rebuild source code."),
+            ("SSH private keys in listings", 'site:{domain} intitle:"index of" "id_rsa" -"id_rsa.pub"', "Private keys sitting in a browsable directory."),
+            ("SFTP editor configs", "site:{domain} inurl:sftp-config.json", "Sublime SFTP settings files that store server hostnames and passwords."),
+            ("Terraform state / cloud credentials", 'site:{domain} ext:tfstate OR inurl:".aws/credentials"', "Terraform state and AWS credential files contain resource details and often live secrets."),
+        ],
+    },
+    {
+        "category": "Backups and database dumps",
+        "queries": [
+            ("Backup file extensions", "site:{domain} ext:bak OR ext:old OR ext:backup OR ext:orig OR ext:save", "Leftover copies of scripts and configs are often served as plain text."),
+            ("Backup archives", "site:{domain} inurl:backup (ext:zip OR ext:tar OR ext:gz OR ext:7z OR ext:rar)", "Compressed site or database backups reachable by URL."),
+            ("phpMyAdmin dump text", 'site:{domain} intext:"-- Dumping data for table" OR intext:"phpMyAdmin MySQL-Dump"', "Pasted or uploaded SQL dumps that include table contents."),
+            ("BackupBuddy archives", 'site:{domain} intitle:"index of" inurl:backupbuddy_backups', "WordPress BackupBuddy backups stored in a browsable folder."),
+        ],
+    },
+    {
+        "category": "Logs and debug endpoints",
+        "queries": [
+            ("Web server logs", "site:{domain} inurl:access.log OR inurl:error.log ext:log", "Access and error logs reveal internal paths, IPs and sometimes session tokens."),
+            ("WordPress debug log", "site:{domain} inurl:wp-content/debug.log", "WP_DEBUG output written to a public file, leaking paths and plugin errors."),
+            ("Laravel debug page", 'site:{domain} intext:"Whoops! There was an error"', "Laravel/Whoops error pages that expose environment variables and stack traces."),
+            ("Django debug page", 'site:{domain} intext:"You\'re seeing this error because you have DEBUG = True"', "Django running with DEBUG on, which prints settings and code paths."),
+            ("Spring Boot actuator", "site:{domain} inurl:/actuator/env OR inurl:/actuator/heapdump", "Actuator endpoints can disclose configuration values and even memory dumps."),
+            ("Apache server-status", 'site:{domain} inurl:server-status intitle:"Apache Status"', "Live server status pages show client IPs and requested URLs."),
+        ],
+    },
+    {
+        "category": "Admin and developer tools",
+        "queries": [
+            ("Jenkins dashboards", 'site:{domain} intitle:"Dashboard [Jenkins]"', "CI servers reachable from the internet, sometimes without authentication."),
+            ("Grafana logins", 'site:{domain} intitle:"Grafana" inurl:/login', "Monitoring dashboards; older versions have known auth bypasses."),
+            ("Kibana consoles", 'site:{domain} intitle:"Kibana" OR inurl:app/kibana', "Log/analytics consoles that can expose large amounts of internal data."),
+            ("Elasticsearch nodes", 'site:{domain} intext:"You Know, for Search"', "An Elasticsearch node answering publicly, often with no authentication."),
+            ("Swagger / API docs", "site:{domain} inurl:swagger-ui OR inurl:/swagger/index.html OR inurl:api-docs", "Public API documentation lists every endpoint, including internal ones."),
+            ("Tomcat manager", 'site:{domain} intitle:"Apache Tomcat" inurl:manager', "Tomcat manager consoles allow deploying code if credentials are weak."),
+            ("GitLab sign-in pages", 'site:{domain} intitle:"GitLab" inurl:users/sign_in', "Self-hosted GitLab instances; confirm registration and visibility settings."),
+            ("Webmail portals", "site:{domain} inurl:webmail intitle:login", "Mail login portals are frequent phishing and password-spray targets."),
+        ],
+    },
+    {
+        "category": "CMS fingerprints",
+        "queries": [
+            ("WordPress user listing", 'site:{domain} inurl:"wp-json/wp/v2/users"', "The REST API reveals real usernames unless it is restricted."),
+            ("WordPress readme version", 'site:{domain} inurl:readme.html intext:"WordPress"', "The default readme states the installed version."),
+            ("WordPress XML-RPC", "site:{domain} inurl:xmlrpc.php", "An enabled XML-RPC endpoint is used for brute-force and pingback abuse."),
+            ("Joomla config backups", "site:{domain} inurl:configuration.php-dist OR inurl:configuration.php.bak", "Backups of the Joomla config expose database credentials."),
+            ("Drupal changelog", 'site:{domain} inurl:CHANGELOG.txt intext:"Drupal"', "The changelog file states the exact Drupal version."),
+        ],
+    },
+    {
+        "category": "Sensitive documents",
+        "queries": [
+            ("Confidential documents", 'site:{domain} (ext:doc OR ext:docx OR ext:xls OR ext:xlsx OR ext:pdf) intext:"confidential" OR intext:"internal use only"', "Internal documents that ended up indexed by search engines."),
+            ("Internal spreadsheets", 'site:{domain} (ext:xls OR ext:xlsx OR ext:csv) intext:"employee" OR intext:"salary" OR intext:"invoice"', "Spreadsheets with staff or financial data that were never meant to be public."),
+        ],
+    },
+    {
+        "category": "Pre-production hosts",
+        "queries": [
+            ("Staging / dev / test sites", "site:{domain} inurl:staging OR inurl:dev OR inurl:test OR inurl:uat", "Pre-production copies are usually less hardened and may hold real data."),
+        ],
+    },
+    {
+        "category": "Third-party leak sources",
+        "queries": [
+            ("GitHub mentions with secrets", 'site:github.com "{domain}" (password OR secret OR api_key OR token)', "Public repositories that reference this domain next to a credential."),
+            ("GitLab mentions", 'site:gitlab.com "{domain}" (password OR secret OR token)', "Public GitLab projects referencing this domain."),
+            ("Pastebin mentions", 'site:pastebin.com "{domain}"', "Pastes that mention this domain, often credential or data dumps."),
+            ("Trello boards", 'site:trello.com "{domain}"', "Public Trello boards where staff sometimes pin credentials or internal notes."),
+            ("Public Google Docs and Sheets", 'site:docs.google.com "{domain}" (password OR credentials OR internal)', "Shared Docs or Sheets that mention this domain."),
+        ],
+    },
+    {
         "category": "Cloud storage exposure",
         "queries": [
             ("Open S3 buckets", "site:s3.amazonaws.com \"{domain}\"", "Amazon S3 buckets referencing this domain that Google has indexed."),
             ("Open Azure blobs", "site:blob.core.windows.net \"{domain}\"", "Azure Blob Storage containers referencing this domain."),
+            ("Open Google Cloud Storage", 'site:storage.googleapis.com "{domain}"', "Google Cloud Storage buckets referencing this domain."),
         ],
     },
 ]
 
 
-def dork_categories_for_domain(domain: str):
-    """Return the dork catalog with each query rendered for `domain` and
-    a ready-to-open Google search URL.
+def exposed_dork_labels(target_id: int) -> dict:
+    """{dork label: number of confirmed exposures} for one target, read from
+    the "[Dork]" findings the exposure scan stored (each one names its label)."""
+    from models import Asset, Vulnerability
+
+    rows = (
+        Vulnerability.query.join(Asset)
+        .filter(Asset.target_id == target_id, Vulnerability.title.like("[Dork]%"), Vulnerability.status.in_(("open", "in_progress")))
+        .with_entities(Vulnerability.description)
+        .all()
+    )
+    counts = {}
+    for (description,) in rows:
+        match = re.match(r'Google dork "([^"]+)"', description or "")
+        if match:
+            counts[match.group(1)] = counts.get(match.group(1), 0) + 1
+    return counts
+
+
+def dork_categories_for_domain(domain: str, exposed: dict = None):
+    """Return the dork catalog with each query rendered for `domain`, a
+    ready-to-open Google search URL, and how many confirmed exposures the
+    exposure scan found for it (`exposed` maps label -> count).
     """
+    exposed = exposed or {}
     categories = []
     for group in _DORK_TEMPLATES:
         queries = []
@@ -150,10 +262,20 @@ def dork_categories_for_domain(domain: str):
                     "query": query,
                     "description": description,
                     "url": f"https://www.google.com/search?q={quote_plus(query)}",
+                    "exposed": exposed.get(label, 0),
                 }
             )
         categories.append({"category": group["category"], "queries": queries})
     return categories
+
+
+def query_for(label: str, domain: str):
+    """The rendered dork query for a catalog label, or None if there is no such label."""
+    for group in _DORK_TEMPLATES:
+        for item_label, query_template, _description in group["queries"]:
+            if item_label == label:
+                return query_template.format(domain=domain)
+    return None
 
 
 def total_dork_count() -> int:

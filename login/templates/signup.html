@@ -64,34 +64,35 @@
           </div>
 
           <div class="form-group">
-            <label for="account_type">Account type</label>
-            <select id="account_type">
-              <option value="user" {{ 'selected' if role != 'it_admin' else '' }}>User</option>
-              <option value="it_admin" {{ 'selected' if role == 'it_admin' else '' }}>Admin</option>
-            </select>
-          </div>
-
-          <div class="form-group" id="user-role-group" {{ 'hidden' if role == 'it_admin' else '' }}>
             <label for="role">Role</label>
-            <select id="role" name="role" {{ 'disabled' if role == 'it_admin' else '' }}>
+            <select id="role" name="role">
               <option value="cybersecurity_analyst" {{ 'selected' if role == 'cybersecurity_analyst' or not role else '' }}>Cybersecurity Analyst</option>
               <option value="threat_intel_analyst" {{ 'selected' if role == 'threat_intel_analyst' else '' }}>Threat Intelligence Analyst</option>
-              <option value="security_team" {{ 'selected' if role == 'security_team' else '' }}>Security Team</option>
             </select>
             <p class="field-hint">Cybersecurity Analyst runs scans and manages targets/assets. Threat Intelligence Analyst reviews findings for real-world exploitation risk (CVSS, CISA KEV, public exploits) but doesn't trigger scans.</p>
           </div>
 
-          <input type="hidden" id="role_admin" name="role" value="it_admin" {{ '' if role == 'it_admin' else 'disabled' }}>
-
           <div class="form-group">
             <label for="password">Password</label>
-            <input type="password" id="password" name="password" required>
-            <p class="field-hint">At least 10 characters, with a letter and a number.</p>
+            <div class="password-field">
+              <input type="password" id="password" name="password" required>
+              <button type="button" class="btn-toggle-password" data-target="password" aria-label="Show password">Show</button>
+            </div>
+            <ul class="password-rules" id="password_rules" aria-live="polite">
+              <li data-rule="length">More than 8 characters</li>
+              <li data-rule="upper">At least one uppercase letter</li>
+              <li data-rule="number">At least one number</li>
+              <li data-rule="special">At least one special character (e.g. ! @ # $ %)</li>
+            </ul>
           </div>
 
           <div class="form-group">
             <label for="confirm_password">Confirm password</label>
-            <input type="password" id="confirm_password" name="confirm_password" required>
+            <div class="password-field">
+              <input type="password" id="confirm_password" name="confirm_password" data-confirm-of="password" required>
+              <button type="button" class="btn-toggle-password" data-target="confirm_password" aria-label="Show password">Show</button>
+            </div>
+            <p id="confirm_password_hint" class="match-hint" role="status" aria-live="polite" hidden></p>
           </div>
 
           <div class="form-group">
@@ -112,7 +113,10 @@
     </section>
   </div>
 
-  <script src="{{ url_for('static', filename='js/signup-role.js') }}"></script>
+
+  <script src="{{ url_for('static', filename='js/password-toggle.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/password-rules.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/password-match.js') }}"></script>
 
   {% include "_cookie_banner.html" %}
 </body>

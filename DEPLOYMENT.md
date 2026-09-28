@@ -24,6 +24,25 @@ started that scan and silently do nothing.
   requirement. If you later need multiple processes/machines, move both the
   job registry design and the rate limiter to a shared backend (Redis) first.
 
+## Continuous monitoring (the scheduler)
+
+Monitored targets are re-scanned by a background thread inside the same single process
+(`services/monitor_service.py`), so it needs the same one-process deployment described
+above and nothing else: no cron job, no extra service.
+
+- It starts with the app (under `flask run --debug` it starts in the serving process, on
+  first request). Targets are claimed with one atomic database update, so even an
+  accidental second process cannot scan the same target twice.
+- Existing databases are upgraded in place at start-up (`AUTO_UPGRADE_SCHEMA`): new columns
+  and the `monitor_events` table are added, nothing is removed. Back up the database first
+  as you would before any release.
+- To send alert emails set `MAIL_SERVER`, `MAIL_USERNAME`, `MAIL_PASSWORD` (see `.env`);
+  without them alerts are only written to the application log.
+- Optional, to add template-based scanning: install Nuclei (see below). The built-in
+  configuration checks run either way.
+- To remove the sample findings that older versions stored when Nuclei was missing:
+  `python database/seed.py --remove-sample-findings` (only exact matches are deleted).
+
 ## Prerequisites (both OSes)
 
 - Python 3.11+

@@ -7,19 +7,25 @@ from extensions import bcrypt, db
 # Roles
 ROLE_IT_ADMIN = "it_admin"
 ROLE_ANALYST = "cybersecurity_analyst"
-ROLE_SECURITY_TEAM = "security_team"
 ROLE_THREAT_INTEL = "threat_intel_analyst"
-ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_SECURITY_TEAM, ROLE_THREAT_INTEL)
+ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_THREAT_INTEL)
 
-# Severities
+# Severities / finding statuses
 SEVERITIES = ("critical", "high", "medium", "low")
+VULN_STATUSES = ("open", "in_progress", "resolved", "false_positive")
 
 # Scan types / status
-SCAN_TYPES = ("asset_discovery", "port_discovery", "vulnerability_scan")
+SCAN_TYPES = ("asset_discovery", "port_discovery", "vulnerability_scan", "dork_scan")
 SCAN_STATUSES = ("pending", "running", "paused", "completed", "failed", "stopped")
 
 # Report types
 REPORT_TYPES = ("pdf", "csv")
+
+# Continuous monitoring: how often a target is re-scanned automatically (None = off).
+MONITOR_INTERVALS = {"off": None, "daily": 1, "weekly": 7, "monthly": 30}
+
+# What the monitor records when a re-scan finds something different from last time.
+EVENT_TYPES = ("asset_new", "asset_missing", "asset_back", "finding_new", "finding_resolved", "finding_reopened")
 
 
 class User(UserMixin, db.Model):
@@ -69,9 +75,21 @@ class AuthorizedTarget(db.Model):
     authorized = db.Column(db.Boolean, nullable=False, default=False)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Continuous monitoring: re-scan every N days (NULL = off) and when the last chain started.
+    monitor_interval_days = db.Column(db.Integer)
+    monitor_last_run_at = db.Column(db.DateTime)
 
     assets = db.relationship(
         "Asset", backref="target", lazy=True, cascade="all, delete-orphan"
+    )
+    # No database-level foreign key on MonitorEvent.target_id: databases built from
+    # database/mysql_schema.sql use INT UNSIGNED ids, and MySQL refuses a foreign key between a
+    # signed and an unsigned column. The ORM still deletes a target's events along with it.
+    events = db.relationship(
+        "MonitorEvent",
+        primaryjoin="AuthorizedTarget.id == foreign(MonitorEvent.target_id)",
+        lazy=True,
+        cascade="all, delete-orphan",
     )
     scans = db.relationship(
         "Scan", backref="target", lazy=True, cascade="all, delete-orphan"
@@ -100,6 +118,11 @@ class Asset(db.Model):
     url = db.Column(db.String(500))
     technologies = db.Column(db.String(500))
     discovery_date = db.Column(db.DateTime, default=datetime.utcnow)
+    # Monitoring: when discovery last returned this host, and how many discovery
+    # runs in a row missed it ("missing" once it has been missed twice running).
+    last_seen_at = db.Column(db.DateTime)
+    status = db.Column(db.String(20), nullable=False, default="active")
+    missed_runs = db.Column(db.Integer, nullable=False, default=0)
 
     ports_services = db.relationship(
         "PortService", backref="asset", lazy=True, cascade="all, delete-orphan"
@@ -260,4 +283,30 @@ class AuditLog(db.Model):
             "action": self.action,
             "detail": self.detail,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+        }
+
+
+class MonitorEvent(db.Model):
+    """One change noticed by continuous monitoring (a new or missing asset, a new,
+    fixed or reopened finding). The "Changes detected" panel is built from these."""
+
+    __tablename__ = "monitor_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    target_id = db.Column(db.Integer, nullable=False, index=True)   # see AuthorizedTarget.events
+    event_type = db.Column(db.String(30), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    severity = db.Column(db.String(20))
+    detail = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "target_id": self.target_id,
+            "event_type": self.event_type,
+            "subject": self.subject,
+            "severity": self.severity,
+            "detail": self.detail,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

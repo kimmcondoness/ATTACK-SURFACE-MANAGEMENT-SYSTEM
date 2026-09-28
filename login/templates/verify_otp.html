@@ -58,6 +58,9 @@
           <div class="form-group">
             <label for="otp_code">Verification code</label>
             <input type="text" id="otp_code" name="otp_code" class="otp-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" required autofocus>
+            {% if mode == 'login' %}
+            <p class="field-hint">After this, you won't be asked for a code again on this browser for {{ config.DEVICE_TRUST_DAYS }} days, even if you sign out and back in.</p>
+            {% endif %}
           </div>
 
           <button type="submit" class="btn-success">

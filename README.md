@@ -18,6 +18,14 @@ The system only scans assets that are **owned or explicitly authorized** by the 
 2. Detect vulnerabilities and security misconfigurations.
 3. Provide centralized monitoring, risk prioritization, and reporting.
 
+## How each objective is met
+
+| Objective | What delivers it |
+|---|---|
+| Automatically discover **and continuously monitor** internet-facing assets | Subfinder and Nmap discover assets and services on one click. **Continuous monitoring** re-scans each target daily, weekly or monthly on its own (background scheduler), tracks every asset (new / missing / back), and records what changed between scans in **Changes detected**. The owner is emailed about the important changes. |
+| Detect vulnerabilities and security misconfigurations | Built-in **configuration checks** (HTTPS and TLS certificate, security headers, information disclosure, cookies, CORS) run on every scan and need no extra tool. Also: NVD CVE matching on detected service banners, 40 direct **exposure checks** for what Google dorks look for (exposed `.env`, `.git`, backups, debug pages, admin tools, public buckets), and Nuclei's template scan when Nuclei is installed. Findings are enriched with CVSS, CISA KEV and EPSS. A finding that a later scan no longer detects is marked resolved automatically. |
+| Centralized dashboard, risk prioritization and reporting | One dashboard: live radar, charts, changes, targets, dorking and scan history; inventory pages; Findings & CVE Report with triage; risk score per finding and per target; PDF/CSV reports with mitigation steps; a Threat Intelligence page for analysts; an IT Administrator user directory. |
+
 ---
 
 # What is Attack Surface Management?
@@ -146,8 +154,57 @@ Purpose
 
 Purpose
 
-- vulnerability scanning
+- template-based vulnerability scanning
 - security misconfiguration detection
+
+Optional: when Nuclei is installed its findings are added to every vulnerability scan.
+When it is not installed the scan says so and carries on with the built-in configuration
+checks below. The app never invents findings.
+
+---
+
+## Built-in configuration checks
+
+Run on every vulnerability scan (`scanner/config_scanner.py`), with nothing to install.
+They are ordinary requests to the target's own hosts (a few GETs, one TRACE, one TLS
+handshake); nothing is exploited.
+
+- HTTPS: not offered at all, or plain HTTP that does not redirect to it
+- TLS certificate: expired, wrong hostname, not trusted, expiring within 14 days; TLS 1.0 / 1.1 accepted
+- Security headers: Strict-Transport-Security, Content-Security-Policy, clickjacking protection,
+  X-Content-Type-Options, Referrer-Policy
+- Information disclosure: version numbers in `Server`, `X-Powered-By`, `X-AspNet-Version`
+- Cookies missing `Secure` / `HttpOnly`; CORS that lets any website read responses; HTTP TRACE enabled
+
+Only a real page (a 2xx response) is judged, so an error, a block page or a redirect to
+another site is never reported as "missing headers". Findings are titled `[Config] ...`
+and carry their own step-by-step mitigation.
+
+---
+
+## Continuous monitoring
+
+Turn it on per target (Your targets, Monitoring column): **Daily, Weekly or Monthly**.
+
+- A background scheduler (checks every minute) starts the same full scan a person would,
+  for every authorized target that is due. A target is claimed with one atomic database
+  update, so it can never be scanned twice for the same period.
+- **Changes detected** on the dashboard lists what differs from the previous scan:
+  new asset, asset missing (not returned by two discovery runs in a row) and asset back;
+  new finding, fixed (a deterministic check no longer detects it: the finding is marked
+  resolved) and reopened. The first scan of a target only sets the baseline.
+- Assets are de-duplicated across scans, and a host discovery says is gone is no longer scanned.
+- The owner is emailed once per scan when something important changed (a new or missing
+  asset, or a new or reopened critical/high finding). Without `MAIL_SERVER` the message is
+  only logged.
+- Settings (`config.py`): `MONITOR_SCHEDULER_ENABLED`, `MONITOR_POLL_SECONDS`,
+  `MONITOR_MAX_CONCURRENT_SCANS`, `MONITOR_ALERT_EMAILS`.
+- Existing databases are upgraded in place at start-up (new columns and the
+  `monitor_events` table are added, nothing is lost): see `database/upgrade.py`.
+
+Only authorized targets are ever scanned, on a schedule or otherwise.
+
+---
 
 ---
 
@@ -193,16 +250,24 @@ Port Discovery
 Store Services
     ↓
 Vulnerability Scan
-(Nuclei)
+(built-in configuration checks
+ + NVD CVE matching
+ + Nuclei when installed)
     ↓
 Dork Exposure Check
 (direct requests)
     ↓
+Change Detection
+(new / missing assets, new / fixed findings)
+    ↓
 Risk Analysis
     ↓
-Dashboard
+Dashboard + Alert Email
     ↓
 Generate Report
+
+Continuous monitoring: the scheduler repeats the whole scan chain
+for every monitored target when it is due.
 ```
 
 ---
@@ -220,6 +285,7 @@ Flask
 ├── Asset Discovery
 ├── Scanner Integration
 ├── Vulnerability Module
+├── Continuous Monitoring
 ├── Risk Analysis
 ├── Dashboard API
 ├── Reporting
@@ -241,6 +307,10 @@ Main tables
 - vulnerabilities
 - scans
 - reports
+- monitor_events (changes noticed by continuous monitoring)
+
+Continuous monitoring adds `monitor_interval_days` and `monitor_last_run_at` to
+`authorized_targets`, and `last_seen_at`, `status` and `missed_runs` to `assets`.
 
 Relationships
 
@@ -285,6 +355,15 @@ Display
 - Charts
 - Asset Summary
 - Google Dorking (curated queries per target, with confirmed exposures flagged)
+- Long tables (Your targets, Scan history) are paged 10 rows at a time with page numbers
+- Changes detected: what changed between scans (new / missing assets, new / fixed /
+  reopened findings), following the selected target
+- Monitoring column in Your targets: Off / Daily / Weekly / Monthly, with the next scan time
+- Live attack surface radar: assets ringed by their worst live finding (riskiest in the
+  centre), with callouts for the top findings. The radar sits still until a scan starts;
+  then the sweep runs and the picture updates live, and it stops when the scan ends.
+  The scan-activity and finding-trend charts wait too: they show their result only after
+  the scan has finished
 
 ---
 
@@ -323,8 +402,10 @@ Functions
 - Start Port Discovery
 - Start Vulnerability Scan
 - Start Dork Exposure Check (confirms Google dork exposures directly on the host)
+- Set a monitoring schedule per target (automatic re-scans; see Continuous monitoring)
 - Pause / Resume / Stop a running scan
-- View Scan Progress
+- View Scan Progress (live elapsed timer that excludes paused time, and a progress
+  bar based on the scan phases actually finished; survives a page reload)
 - Scan History
 
 ---
@@ -391,7 +472,9 @@ Display
   targets the viewer personally scanned)
 - CISA KEV matches
 - Prioritized findings, ranked by real CVSS score, CISA KEV status and
-  public exploit availability
+  public exploit availability, with each CVE's EPSS score (FIRST.org's estimated chance
+  of exploitation in the next 30 days), a colour-coded status (open in red, in progress
+  in amber), CVE links to the NIST NVD, and a keyword / severity filter
 - Recent CISA KEV catalog additions
 
 Functions
@@ -412,6 +495,21 @@ Functions
 - Edit User
 - Delete User
 - Assign Roles
+
+User directory (Active Directory style): the admin dashboard lists every user with
+a search box, and **Manage** opens that user's page with a left menu:
+
+- Profile: identity and account details; change name, username and email
+  (validated, and must stay unique)
+- Access: change role, and see what that role can do
+- Targets: the user's authorized targets with asset and live-finding counts
+- Authentication: reset password (same password rules), lock / unlock account,
+  reset MFA (makes every trusted device ask for the email code again)
+- Activity: what the user did and what administrators changed on the account
+
+Users cannot edit their own username or email; only an IT Administrator can. An
+administrator cannot change their own role or lock their own account. A locked
+account is signed out immediately.
 
 ---
 
@@ -439,6 +537,14 @@ bcrypt
 
 Never store plaintext passwords.
 
+Password requirements (enforced on sign up, password reset and admin-created
+accounts; a password that misses any rule is rejected)
+
+- more than 8 characters
+- at least one uppercase letter
+- at least one number
+- at least one special character
+
 ---
 
 ## Authentication
@@ -454,6 +560,14 @@ or
 Session timeout
 
 30 minutes.
+
+Email verification code (MFA)
+
+Asked once every 7 days per browser, not at every sign-in. After a correct code the
+browser is trusted for 7 days, counted from that moment; signing in again does not
+extend it, and signing out does not cancel it. The code is asked again after 7 days,
+on a new browser or after cookies are cleared, or after an IT Administrator resets
+the user's MFA or password. IT Administrators are not asked for a code.
 
 ---
 

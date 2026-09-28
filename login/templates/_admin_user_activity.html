@@ -1,0 +1,25 @@
+<div class="ud-section">
+  <h2>Recent activity</h2>
+  {% if activity %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>When (UTC)</th><th>Action</th><th>Detail</th><th>By</th></tr>
+      </thead>
+      <tbody>
+        {% for entry in activity %}
+        <tr>
+          <td class="text-mono">{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') if entry.timestamp else '-' }}</td>
+          <td>{{ entry.action }}</td>
+          <td class="text-mono">{{ entry.detail or '-' }}</td>
+          <td>{{ entry.actor }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="ud-note">Shows what {{ subject_name }} did and what administrators changed on this account. Latest 50 entries.</p>
+  {% else %}
+  <p class="empty-row">No activity recorded yet.</p>
+  {% endif %}
+</div>

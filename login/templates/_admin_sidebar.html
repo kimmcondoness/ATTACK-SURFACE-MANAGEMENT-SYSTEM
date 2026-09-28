@@ -1,0 +1,24 @@
+<aside class="ws-sidebar">
+  <div class="ws-brand">
+    <span class="dot"></span>
+    <div class="ws-brand-text">
+      <strong>ATTACK SURFACE</strong>
+      <span>MANAGEMENT</span>
+    </div>
+  </div>
+
+  <nav class="ws-nav">
+    <a href="{{ url_for('auth_pages.admin_dashboard') }}" class="active">Dashboard</a>
+  </nav>
+
+  <div class="ws-sidebar-foot">
+    <div class="ws-who">
+      <span class="ws-role-badge">IT Admin</span>
+      <span>{{ user.first_name or user.username }}</span>
+    </div>
+    <form method="POST" action="{{ url_for('auth_pages.logout_page') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="ws-btn-logout">Sign out</button>
+    </form>
+  </div>
+</aside>

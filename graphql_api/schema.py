@@ -1,14 +1,18 @@
+from datetime import datetime
+
 from ariadne import ObjectType, QueryType, make_executable_schema
 
 from models import Asset, AuthorizedTarget, Scan, Vulnerability
 from services import job_registry
 from services.chart_service import normalize_range, scan_status_totals, severity_totals
 from services.risk_service import risk_score
+from services.scan_progress_service import chain_progress
 from services.target_service import list_target_ids_for_owner
 
 type_defs = """
     type Query {
         scanStatus(scanId: Int!): ScanStatus
+        activeScan: ScanStatus
         liveCharts(range: String, targetId: Int): LiveCharts!
         recentFindings(limit: Int): [Finding!]!
     }
@@ -20,6 +24,9 @@ type_defs = """
         source: String
         targetDomain: String!
         paused: Boolean!
+        elapsedSeconds: Float!
+        progressPercent: Int
+        phase: String!
     }
 
     type LiveCharts {
@@ -63,14 +70,8 @@ def _owned_scan(scan_id, user):
     return scan, target
 
 
-@query.field("scanStatus")
-def resolve_scan_status(_, info, scanId):
-    user = info.context["user"]
-    owned = _owned_scan(scanId, user)
-    if not owned:
-        return None
-    scan, target = owned
-    control = job_registry.get_control(scanId)
+def _scan_status(scan, target):
+    control = job_registry.get_control(scan.id)
     paused = bool(control and control.is_paused())
 
     # The lead (asset_discovery) row can finish in seconds while the rest
@@ -79,10 +80,22 @@ def resolve_scan_status(_, info, scanId):
     # come from whether that thread is still alive, not from one phase's
     # own row, or the UI would report "completed" while work is still
     # happening.
-    if job_registry.is_running(scanId):
+    alive = job_registry.is_running(scan.id)
+    if alive:
         status = "paused" if paused else "running"
     else:
         status = scan.status
+
+    progress = chain_progress(scan)
+    percent = progress["percent"]
+    if not alive and status == "completed":
+        percent = 100
+
+    # Elapsed is wall-clock minus time spent paused; once the chain has ended
+    # it stops at the moment the last phase finished.
+    end = datetime.utcnow() if alive else (progress["finished_at"] or datetime.utcnow())
+    paused_for = control.paused_seconds() if control else 0.0
+    elapsed = max(0.0, (end - scan.started_at).total_seconds() - paused_for) if scan.started_at else 0.0
 
     return {
         "scanId": scan.id,
@@ -91,7 +104,33 @@ def resolve_scan_status(_, info, scanId):
         "source": scan.source,
         "targetDomain": target.domain,
         "paused": paused,
+        "elapsedSeconds": elapsed,
+        "progressPercent": percent,
+        "phase": progress["phase"],
     }
+
+
+@query.field("scanStatus")
+def resolve_scan_status(_, info, scanId):
+    owned = _owned_scan(scanId, info.context["user"])
+    return _scan_status(*owned) if owned else None
+
+
+@query.field("activeScan")
+def resolve_active_scan(_, info):
+    """The user's scan chain that is still running, if any, so the scan panel can
+    pick it up again after a page reload."""
+    target_ids = list_target_ids_for_owner(info.context["user"].id)
+    if not target_ids:
+        return None
+    leads = (
+        Scan.query.filter(Scan.target_id.in_(target_ids), Scan.scan_type == "asset_discovery")
+        .order_by(Scan.id.desc())
+        .limit(20)
+        .all()
+    )
+    lead = next((s for s in leads if job_registry.is_running(s.id)), None)
+    return _scan_status(lead, AuthorizedTarget.query.get(lead.target_id)) if lead else None
 
 
 def _to_segments(totals: dict):

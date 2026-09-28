@@ -14,8 +14,8 @@
     <main class="ws-main">
       <div class="ws-topbar">
         <p class="kicker">Dashboard</p>
-        <h1>Scan activity &amp; findings</h1>
-        <p>Full detail on scope, scan activity and findings across the targets assigned to you.</p>
+        <h1>Scan activity</h1>
+        <p>Scope, scan activity and Google dorking across the targets assigned to you.</p>
       </div>
 
       {% with messages = get_flashed_messages(with_categories=true) %}
@@ -46,7 +46,7 @@
           <span class="scan-panel-icon">&#9673;</span>
           <div>
             <h2>Scan a target</h2>
-            <p>Run subdomain enumeration, port discovery and vulnerability scanning against an authorized domain or URL. Uses Subfinder, Nmap and Nuclei when installed, and falls back to clearly-labeled mock data otherwise.</p>
+            <p>Run subdomain enumeration, port discovery, vulnerability scanning and a Google dork exposure check against an authorized domain or URL. Uses Subfinder, Nmap and Nuclei when installed, and falls back to clearly-labeled mock data otherwise.</p>
           </div>
         </div>
         <form id="scan-form" class="scan-form" autocomplete="off">
@@ -56,6 +56,19 @@
           <button type="button" id="scan-stop-btn" class="btn-scan btn-scan-stop" disabled>Stop</button>
         </form>
         <p id="scan-status-line" class="scan-status-line">Idle. Enter a domain or URL and click Run.</p>
+
+        <div id="scan-progress" class="scan-progress" hidden>
+          <div class="scan-progress-meta">
+            <span id="scan-phase" class="scan-phase">Starting</span>
+            <span class="scan-clock">
+              <span id="scan-timer" class="scan-timer" role="timer" aria-label="Elapsed scan time">00:00</span>
+              <span id="scan-percent" class="scan-percent"></span>
+            </span>
+          </div>
+          <div id="scan-progress-track" class="scan-progress-track indeterminate" role="progressbar" aria-label="Scan progress" aria-valuemin="0" aria-valuemax="100">
+            <div id="scan-progress-fill" class="scan-progress-fill"></div>
+          </div>
+        </div>
       </section>
 
       <div class="ws-stats" id="live-stats">
@@ -80,6 +93,23 @@
           <div class="stat-bar"><div class="stat-bar-fill" id="stat-risk-bar" data-pct="{{ stat_bar_pct.risk }}"></div></div>
         </div>
       </div>
+
+      <section class="ws-panel radar-panel" id="radar-widget" data-endpoint="{{ url_for('radar.radar_data') }}" aria-label="Attack surface radar">
+        <div class="radar-stage">
+          <canvas id="radar-canvas" class="radar-canvas" role="img" aria-label="Attack surface radar"></canvas>
+          <div class="radar-live" id="radar-live" role="status">
+            <span class="radar-live-dot" aria-hidden="true"></span>
+            <span id="radar-live-text">Radar idle</span>
+          </div>
+          <button type="button" id="radar-pause" class="radar-pause" aria-pressed="false" aria-label="Pause radar sweep" disabled></button>
+        </div>
+        <div class="radar-stats">
+          <div title="Every asset found for this view"><span class="l">Assets Found</span><span class="n" id="radar-stat-assets">{{ radar.stats.assets }}</span></div>
+          <div class="crit" title="Live critical and high severity findings"><span class="l">Critical Risks</span><span class="n" id="radar-stat-critical">{{ radar.stats.critical_risks }}</span></div>
+          <div class="warn" title="All open and in-progress findings"><span class="l">Active Alerts</span><span class="n" id="radar-stat-alerts">{{ radar.stats.active_alerts }}</span></div>
+        </div>
+        <script id="radar-initial-data" type="application/json">{{ radar|tojson }}</script>
+      </section>
 
       <div class="chart-range-picker" id="chart-range-picker" data-range="{{ chart_range }}">
         <span class="chart-range-label">Range:</span>
@@ -134,15 +164,51 @@
         }
       </script>
 
+      {% set change_labels = {
+        'asset_new': ('New asset', 'change-new'),
+        'asset_missing': ('Asset missing', 'change-missing'),
+        'asset_back': ('Asset back', 'change-new'),
+        'finding_new': ('New finding', 'change-bad'),
+        'finding_resolved': ('Fixed', 'change-fixed'),
+        'finding_reopened': ('Reopened', 'change-bad'),
+      } %}
+      <section id="changes" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Changes detected{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ events|length }} recorded</span>
+        </div>
+        {% if events %}
+        <table data-paginate="10">
+          <thead>
+            <tr><th>When (UTC)</th><th>Target</th><th>Change</th><th>Detail</th><th>Severity</th></tr>
+          </thead>
+          <tbody>
+            {% for e in events %}
+            {% set label, css = change_labels.get(e.event_type, (e.event_type, 'change-new')) %}
+            <tr>
+              <td class="text-mono">{{ e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else '-' }}</td>
+              <td class="text-mono">{{ target_map.get(e.target_id, '-') }}</td>
+              <td><span class="change-badge {{ css }}">{{ label }}</span></td>
+              <td>{{ e.subject }}{% if e.detail %}<br><span class="change-detail">{{ e.detail }}</span>{% endif %}</td>
+              <td>{% if e.severity %}<span class="pill pill-{{ e.severity }}">{{ e.severity }}</span>{% else %}&mdash;{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">No changes yet. Turn on monitoring for a target (Monitoring column, Your targets below). Once it has been scanned twice, new or missing assets and new or fixed findings appear here, and the owner is emailed about the important ones.</p>
+        {% endif %}
+      </section>
+
       <section id="targets" class="ws-panel">
         <div class="ws-panel-head">
           <h2>Your targets</h2>
           <span>{{ targets|length }} total</span>
         </div>
         {% if targets %}
-        <table>
+        <table data-paginate="10">
           <thead>
-            <tr><th>Domain</th><th>Authorized</th><th>Assets</th><th>Risk</th></tr>
+            <tr><th>Domain</th><th>Authorized</th><th>Assets</th><th>Risk</th><th>Monitoring</th></tr>
           </thead>
           <tbody>
             {% for t in targets %}
@@ -154,6 +220,22 @@
               </td>
               <td>{{ t.assets|length }}</td>
               <td class="text-mono">{{ target_risk.get(t.id, 0) }}</td>
+              <td>
+                <form method="POST" action="{{ url_for('monitoring.update_monitoring', target_id=t.id) }}" class="row-actions">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="target_id" value="{{ selected_target_id or '' }}">
+                  <select name="interval" class="role-select" aria-label="Automatic re-scan schedule for {{ t.domain }}">
+                    {% for value, label in monitor_choices %}
+                    <option value="{{ value }}" {{ 'selected' if value == monitor_choice(t) else '' }}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit" class="btn-mini btn-mini-save">Save</button>
+                </form>
+                {% set due = monitor_next(t) %}
+                {% if due %}
+                <span class="monitor-next">{% if due <= monitor_now %}Next scan: due now{% else %}Next scan: {{ due.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</span>
+                {% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
@@ -163,83 +245,28 @@
         {% endif %}
       </section>
 
-      <section id="assets" class="ws-panel">
-        <div class="ws-panel-head">
-          <h2>Assets (subdomains, IPs &amp; web apps){% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
-          <span>{{ assets|length }} total</span>
-        </div>
-        {% if assets %}
-        <table>
-          <thead>
-            <tr><th>Subdomain</th><th>IP address</th><th>URL</th><th>Target</th><th>Discovered</th></tr>
-          </thead>
-          <tbody>
-            {% for a in assets %}
-            <tr>
-              <td class="text-mono">{{ a.subdomain or '-' }}</td>
-              <td class="text-mono">{{ a.ip_address or '-' }}</td>
-              <td class="text-mono">{{ a.url or '-' }}</td>
-              <td class="text-mono">{{ target_map.get(a.target_id, 'unknown') }}</td>
-              <td class="text-mono">{{ a.discovery_date.strftime('%Y-%m-%d') if a.discovery_date else '-' }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <p class="empty-row">No assets discovered yet. Run asset discovery on one of your targets.</p>
-        {% endif %}
-      </section>
-
-      <section id="network" class="ws-panel">
-        <div class="ws-panel-head">
-          <h2>Open ports &amp; public services{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
-          <span>{{ ports|length }} total</span>
-        </div>
-        {% if ports %}
-        <table>
-          <thead>
-            <tr><th>Asset</th><th>Port</th><th>Protocol</th><th>Service</th><th>State</th></tr>
-          </thead>
-          <tbody>
-            {% for p in ports %}
-            <tr>
-              <td class="text-mono">{{ asset_map.get(p.asset_id, 'unknown') }}</td>
-              <td class="text-mono">{{ p.port }}</td>
-              <td class="text-mono">{{ p.protocol }}</td>
-              <td>{{ p.service_name or '-' }}{% if p.service_version %} <span class="text-mono">({{ p.service_version }})</span>{% endif %}</td>
-              <td>
-                {% if p.state == 'open' %}<span class="pill pill-active">Open</span>
-                {% else %}<span class="pill pill-inactive">{{ p.state }}</span>{% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <p class="empty-row">No open ports or services discovered yet. Run port discovery on one of your targets.</p>
-        {% endif %}
-      </section>
-
       <section id="dorking" class="ws-panel">
         <div class="ws-panel-head">
           <h2>Google Dorking (OSINT){% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
-          <span>{{ dork_count }} queries</span>
+          <span>{{ dork_count }} queries{% if selected_target_id %} &middot; {{ exposed_dork_total }} exposed{% endif %}</span>
         </div>
         {% if not selected_target_id %}
         <p class="empty-row">Select a specific target above to generate Google dork queries for it.</p>
         {% else %}
         <p class="ws-report-summary">
-          Each link opens a real Google search in a new tab &mdash; there is no automated scraping (that would violate
-          Google's Terms of Service and get an IP blocked). Review the results yourself and add anything genuinely
-          exposed as a finding. Only run these against domains you're authorized to assess.
+          Each scan also checks these exposures directly on the host and records what it confirms as a finding
+          (marked <b>Exposed</b> below, with mitigation and a risk score in Findings &amp; CVE Report). The links open a
+          real Google search in a new tab to see what is indexed &mdash; there is no automated scraping, which would
+          violate Google's Terms of Service. Only run these against domains you're authorized to assess.
         </p>
         {% for group in dork_categories %}
-        <details class="dork-group">
+        <details class="dork-group"{% if group.queries|selectattr('exposed')|list %} open{% endif %}>
           <summary>{{ group.category }} <span class="count">{{ group.queries|length }}</span></summary>
           <ul class="dork-list">
             {% for item in group.queries %}
             <li>
               <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.label }}</a>
+              {% if item.exposed %}<span class="pill pill-failed">Exposed &times;{{ item.exposed }}</span>{% endif %}
               <span class="text-mono dork-query">{{ item.query }}</span>
               <p>{{ item.description }}</p>
             </li>
@@ -256,7 +283,7 @@
           <span>{{ recent_scans|length }} shown</span>
         </div>
         {% if recent_scans %}
-        <table>
+        <table data-paginate="10">
           <thead>
             <tr><th>When</th><th>Target</th><th>Type</th><th>Status</th><th>Source</th><th>Result</th></tr>
           </thead>
@@ -290,87 +317,13 @@
         <p class="empty-row">No scans have been run yet{% if selected_target_id %} for this target{% endif %}.</p>
         {% endif %}
       </section>
-
-      <section id="findings" class="ws-panel" style="margin-bottom: 0;">
-        <div class="ws-panel-head" id="reports">
-          <h2>Findings &amp; CVE report{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
-          <span>{{ findings|length }} total</span>
-        </div>
-        <p class="ws-report-summary">
-          Export findings across {{ scoped_stat_values.targets }} target(s) — {{ findings|length }} rows ·
-          {{ vulnerable_count }} vulnerable · {{ needs_review_count }} needs review.
-        </p>
-        <div class="ws-export-actions">
-          <a class="btn-ghost" href="{{ url_for('auth_pages.export_findings_json', target_id=selected_target_id) }}">Export JSON</a>
-          <a class="btn-ghost" href="{{ url_for('auth_pages.export_findings_csv', target_id=selected_target_id) }}">Export CSV</a>
-          <a class="btn-ghost" href="{{ url_for('auth_pages.export_findings_markdown', target_id=selected_target_id) }}">Export Markdown</a>
-        </div>
-
-        <div class="report-generate">
-          {% if selected_target_id %}
-          <form method="POST" action="{{ url_for('workspace_reports.generate_report') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="target_id" value="{{ selected_target_id }}">
-            <input type="hidden" name="report_type" value="pdf">
-            <button type="submit" class="btn-scan btn-scan-run">Generate PDF report</button>
-          </form>
-          <form method="POST" action="{{ url_for('workspace_reports.generate_report') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="target_id" value="{{ selected_target_id }}">
-            <input type="hidden" name="report_type" value="csv">
-            <button type="submit" class="btn-scan">Generate CSV report</button>
-          </form>
-          {% else %}
-          <p class="ws-report-summary" style="margin: 0;">Select a specific target above to generate a formatted PDF or CSV report for it.</p>
-          {% endif %}
-        </div>
-
-        {% if selected_target_id and target_reports %}
-        <div class="report-history">
-          <p class="ws-report-summary" style="margin: 0 0 0.5rem;">Previously generated reports for {{ target_map.get(selected_target_id) }}:</p>
-          <ul class="report-history-list">
-            {% for r in target_reports %}
-            <li>
-              <a href="{{ url_for('workspace_reports.download_report', report_id=r.id) }}">{{ r.report_type|upper }}</a>
-              <span class="text-mono">{{ r.generated_at.strftime('%Y-%m-%d %H:%M') if r.generated_at else '-' }}</span>
-            </li>
-            {% endfor %}
-          </ul>
-        </div>
-        {% endif %}
-
-        {% if findings %}
-        <table>
-          <thead>
-            <tr><th>CVE</th><th>Severity</th><th>Title</th><th>Status</th><th>Discovered</th></tr>
-          </thead>
-          <tbody>
-            {% for f in findings[:25] %}
-            <tr>
-              <td class="text-mono">
-                {% if f.cve %}<a href="https://nvd.nist.gov/vuln/detail/{{ f.cve }}" target="_blank" rel="noopener">{{ f.cve }}</a>
-                {% else %}&mdash;{% endif %}
-              </td>
-              <td><span class="pill pill-{{ f.severity }}">{{ f.severity }}</span></td>
-              <td>{{ f.title }}</td>
-              <td><span class="pill pill-{{ f.status }}">{{ f.status.replace('_', ' ') }}</span></td>
-              <td class="text-mono">{{ f.discovered_at.strftime('%Y-%m-%d') if f.discovered_at else '-' }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% if findings|length > 25 %}
-        <p class="empty-row">Showing 25 of {{ findings|length }} rows — use an export above for the full list.</p>
-        {% endif %}
-        {% else %}
-        <p class="empty-row">No findings recorded for your targets yet.</p>
-        {% endif %}
-      </section>
     </main>
   </div>
 
+  <script src="{{ url_for('static', filename='js/radar.js') }}"></script>
   <script src="{{ url_for('static', filename='js/workspace-charts.js') }}"></script>
   <script src="{{ url_for('static', filename='js/target-filter.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/table-pager.js') }}"></script>
   <script src="{{ url_for('static', filename='js/vendor/chart.umd.js') }}"></script>
   <script src="{{ url_for('static', filename='js/live-scan.js') }}"></script>
 

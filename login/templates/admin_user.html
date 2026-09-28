@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ subject_name }} - User directory - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/workspace.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="ws-shell">
+    {% include "_admin_sidebar.html" %}
+
+    <main class="ws-main">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <div class="ud-head">
+        <span class="ud-avatar" aria-hidden="true">{{ subject_initials }}</span>
+        <div class="ud-head-text">
+          <h1 class="ud-name">{{ subject_name }}</h1>
+          <p class="ud-email">{{ subject.email }}</p>
+        </div>
+        <a class="btn-ghost ud-back" href="{{ url_for('auth_pages.admin_dashboard') }}">&larr; All users</a>
+      </div>
+
+      <div class="ud-layout">
+        <nav class="ud-nav" aria-label="Manage this user">
+          <p class="ud-nav-label">Manage</p>
+          {% for key, label in tabs %}
+          <a href="{{ url_for('admin_users.user_page', user_id=subject.id, tab=key) }}" class="{{ 'active' if key == tab else '' }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+          {% endfor %}
+        </nav>
+
+        <section class="ud-body">
+          {% include "_admin_user_" ~ tab ~ ".html" %}
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/confirm-submit.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

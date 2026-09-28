@@ -29,6 +29,11 @@ def unregister(scan_id: int):
         _jobs.pop(scan_id, None)
 
 
+def running_count() -> int:
+    with _lock:
+        return sum(1 for entry in _jobs.values() if entry["thread"].is_alive())
+
+
 def is_running(scan_id: int) -> bool:
     with _lock:
         entry = _jobs.get(scan_id)

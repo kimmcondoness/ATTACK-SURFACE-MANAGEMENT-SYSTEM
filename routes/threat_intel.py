@@ -1,8 +1,11 @@
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+import csv
+import io
+
+from flask import Blueprint, Response, flash, redirect, render_template, url_for
 from flask_login import current_user, login_required
 
-from extensions import db
 from models import ROLE_IT_ADMIN, ROLE_THREAT_INTEL, Asset, AuthorizedTarget, Vulnerability
+from services import epss_service
 from services.kev_service import recent_kev_entries
 from services.risk_service import vulnerability_priority
 from utils.audit import log_action
@@ -10,12 +13,27 @@ from utils.audit import log_action
 threat_intel_bp = Blueprint("threat_intel", __name__, url_prefix="/workspace/threat-intel")
 
 _ALLOWED_ROLES = (ROLE_THREAT_INTEL, ROLE_IT_ADMIN)
-_STATUS_CHOICES = ("open", "in_progress", "resolved", "false_positive")
 
 
 def _forbidden():
     flash("You do not have permission to view Threat Intelligence.", "error")
     return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+
+def _live_findings():
+    # Org-wide on purpose: unlike the analyst's own-targets workspace, intel
+    # reviews risk across every authorized target.
+    targets = AuthorizedTarget.query.order_by(AuthorizedTarget.created_at.desc()).all()
+    target_ids = [t.id for t in targets]
+    if not target_ids:
+        return targets, {}, []
+
+    asset_target_map = {
+        a.id: a.target_id for a in Asset.query.filter(Asset.target_id.in_(target_ids)).all()
+    }
+    vulns = Vulnerability.query.join(Asset).filter(Asset.target_id.in_(target_ids)).all()
+    live = [v for v in vulns if v.status in ("open", "in_progress")]
+    return targets, asset_target_map, sorted(live, key=vulnerability_priority, reverse=True)
 
 
 @threat_intel_bp.route("", methods=["GET"])
@@ -24,38 +42,16 @@ def threat_intel_page():
     if current_user.role not in _ALLOWED_ROLES:
         return _forbidden()
 
-    # Threat Intelligence is an org-wide function -- it reviews risk across
-    # every authorized target, not just ones this specific analyst created,
-    # unlike the Cybersecurity Analyst's own-targets-only Dashboard.
-    targets = AuthorizedTarget.query.order_by(AuthorizedTarget.created_at.desc()).all()
-    target_ids = [t.id for t in targets]
+    targets, asset_target_map, prioritized = _live_findings()
     target_map = {t.id: t.domain for t in targets}
-    asset_target_map = {
-        a.id: a.target_id
-        for a in Asset.query.filter(Asset.target_id.in_(target_ids)).all()
-    } if target_ids else {}
-
-    all_vulns = (
-        Vulnerability.query.join(Asset).filter(Asset.target_id.in_(target_ids)).all()
-        if target_ids
-        else []
-    )
-    live_vulns = [v for v in all_vulns if v.status in ("open", "in_progress")]
-
-    prioritized = sorted(live_vulns, key=vulnerability_priority, reverse=True)
     kev_matches = [v for v in prioritized if v.kev]
+    scored = [v.cvss_score for v in prioritized if v.cvss_score is not None]
 
     stat_values = {
-        "findings": len(live_vulns),
+        "findings": len(prioritized),
         "kev": len(kev_matches),
-        "exploitable": sum(1 for v in live_vulns if v.exploit_available),
-        "avg_cvss": (
-            round(sum(v.cvss_score for v in live_vulns if v.cvss_score is not None) / max(
-                sum(1 for v in live_vulns if v.cvss_score is not None), 1
-            ), 1)
-            if any(v.cvss_score is not None for v in live_vulns)
-            else 0
-        ),
+        "exploitable": sum(1 for v in prioritized if v.exploit_available),
+        "avg_cvss": round(sum(scored) / len(scored), 1) if scored else 0,
     }
     max_stat = max(stat_values["findings"], stat_values["kev"], stat_values["exploitable"], stat_values["avg_cvss"]) or 0
     stat_bar_pct = {
@@ -64,6 +60,9 @@ def threat_intel_page():
 
     kev_feed = recent_kev_entries(10)
 
+    shown = prioritized[:100]
+    scores = epss_service.lookup([cve for v in shown for cve in epss_service.cve_ids(v.cve)])
+
     return render_template(
         "threat_intel.html",
         active_nav="threat_intel",
@@ -71,34 +70,46 @@ def threat_intel_page():
         targets=targets,
         target_map=target_map,
         asset_target_map=asset_target_map,
-        prioritized=prioritized[:100],
+        prioritized=shown,
         prioritized_total=len(prioritized),
         kev_matches=kev_matches,
         kev_feed=kev_feed,
         stat_values=stat_values,
         stat_bar_pct=stat_bar_pct,
-        status_choices=_STATUS_CHOICES,
         priority=vulnerability_priority,
+        cve_list=epss_service.cve_ids,
+        epss_for=lambda vuln: epss_service.best_score(vuln.cve, scores),
+        epss_level=epss_service.level,
     )
 
 
-@threat_intel_bp.route("/<int:vuln_id>/status", methods=["POST"])
+@threat_intel_bp.route("/briefing.csv", methods=["GET"])
 @login_required
-def update_status(vuln_id):
+def briefing_csv():
     if current_user.role not in _ALLOWED_ROLES:
         return _forbidden()
 
-    vuln = Vulnerability.query.get(vuln_id)
-    if not vuln:
-        flash("Finding not found.", "error")
-        return redirect(url_for("threat_intel.threat_intel_page"))
+    targets, asset_target_map, prioritized = _live_findings()
+    target_map = {t.id: t.domain for t in targets}
 
-    status = request.form.get("status", "")
-    if status not in _STATUS_CHOICES:
-        flash("Invalid status.", "error")
-        return redirect(url_for("threat_intel.threat_intel_page"))
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Priority", "CVE", "Severity", "CVSS", "In CISA KEV", "Public exploit", "Target", "Title"])
+    for v in prioritized:
+        writer.writerow([
+            vulnerability_priority(v),
+            v.cve or "-",
+            v.severity,
+            v.cvss_score if v.cvss_score is not None else "-",
+            "yes" if v.kev else "no",
+            "yes" if v.exploit_available else "no",
+            target_map.get(asset_target_map.get(v.asset_id), "unknown"),
+            v.title,
+        ])
 
-    vuln.status = status
-    db.session.commit()
-    log_action(current_user.id, "threat_intel_status_updated", detail=f"vuln_id={vuln_id} status={status}")
-    return redirect(url_for("threat_intel.threat_intel_page"))
+    log_action(current_user.id, "threat_briefing_exported", detail=f"rows={len(prioritized)}")
+    return Response(
+        buffer.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=threat-briefing.csv"},
+    )

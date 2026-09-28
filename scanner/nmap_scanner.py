@@ -1,8 +1,10 @@
+import ipaddress
 import re
 from typing import Any, Dict, List
 
 from scanner.base import BaseScanner, ScannerResult
 
+_HOST_RE = re.compile(r"^Host:\s+(\S+)", re.MULTILINE)
 
 # nmap's -oG "Ports:" field is port/state/protocol/owner/service/rpc_info/version/
 # -- owner and rpc_info are effectively always empty for a plain -sV scan, so
@@ -15,7 +17,19 @@ class NmapScanner(BaseScanner):
     timeout_seconds = 300
 
     def build_command(self, target: str) -> List[str]:
-        return [self.binary_name, "-sV", "-T4", "--top-ports", "20", "--max-retries", "1", "-oG", "-", target]
+        return [self.binary_name,"-A","-sV", "-T4", "--top-ports", "20", "--max-retries", "1", "-oG", "-", target]
+
+    @staticmethod
+    def extract_host_ip(raw_output: str):
+        """First "Host: <ip> (<name>)" address in nmap's greppable output,
+        or None. Only a valid IP is returned, never a hostname."""
+        match = _HOST_RE.search(raw_output or "")
+        if not match:
+            return None
+        try:
+            return str(ipaddress.ip_address(match.group(1)))
+        except ValueError:
+            return None
 
     def parse_output(self, raw_output: str, target: str) -> List[Dict[str, Any]]:
         results = []

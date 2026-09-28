@@ -14,8 +14,26 @@ _DOMAIN_RE = re.compile(
 _URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
 
 
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 class ValidationError(ValueError):
     pass
+
+
+def validate_username(value: str) -> str:
+    value = (value or "").strip()
+    if not USERNAME_RE.match(value):
+        raise ValidationError("Username must be 3-30 characters (letters, numbers, dots, underscores, hyphens).")
+    return value
+
+
+def validate_email(value: str) -> str:
+    value = (value or "").strip().lower()
+    if not EMAIL_RE.match(value) or len(value) > 120:
+        raise ValidationError("Enter a valid email address.")
+    return value
 
 
 def contains_shell_metacharacters(value: str) -> bool:
@@ -72,6 +90,31 @@ def extract_domain(value: str) -> str:
         host = urlsplit(f"//{value}").netloc
     host = host.split("@")[-1].split(":")[0]
     return validate_domain(host)
+
+
+# Password policy. The same four rules are mirrored in static/js/password-rules.js
+# for the live checklist, but this is the one that is actually enforced.
+_PASSWORD_RULES = (
+    ("more than 8 characters", lambda p: len(p) > 8),
+    ("an uppercase letter", lambda p: any(c.isupper() for c in p)),
+    ("a number", lambda p: re.search(r"[0-9]", p) is not None),
+    ("a special character", lambda p: any(not c.isalnum() and not c.isspace() for c in p)),
+)
+
+
+def password_problems(password: str) -> list:
+    """The password rules this password does not meet (empty list = acceptable)."""
+    return [rule for rule, is_met in _PASSWORD_RULES if not is_met(password or "")]
+
+
+def validate_password(password: str) -> str:
+    if not isinstance(password, str) or not password:
+        raise ValidationError("Password is required.")
+    missing = password_problems(password)
+    if missing:
+        listed = missing[0] if len(missing) == 1 else ", ".join(missing[:-1]) + " and " + missing[-1]
+        raise ValidationError(f"Password must have {listed}.")
+    return password
 
 
 def validate_role(value: str, allowed_roles) -> str:

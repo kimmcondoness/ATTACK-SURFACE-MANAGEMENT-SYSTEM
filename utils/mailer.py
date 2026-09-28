@@ -44,3 +44,30 @@ def send_otp_email(to_email: str, code: str, purpose: str = "login") -> bool:
         current_app.logger.info("[FALLBACK OTP] %s code for %s is %s", purpose, to_email, code)
         return False
     return True
+
+
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    """Send a plain-text email. Without a configured MAIL_SERVER the message is only logged,
+    so monitoring alerts stay testable without SMTP credentials. Never raises."""
+    mail_server = current_app.config.get("MAIL_SERVER")
+    if not mail_server:
+        current_app.logger.info("[DEV EMAIL] to %s | %s\n%s", to_email, subject, body)
+        return False
+
+    message = MIMEText(body)
+    message["Subject"] = subject
+    message["From"] = current_app.config["MAIL_FROM"]
+    message["To"] = to_email
+    username = current_app.config.get("MAIL_USERNAME")
+    password = current_app.config.get("MAIL_PASSWORD")
+    try:
+        with smtplib.SMTP(mail_server, current_app.config["MAIL_PORT"], timeout=10) as smtp:
+            if current_app.config.get("MAIL_USE_TLS"):
+                smtp.starttls()
+            if username and password:
+                smtp.login(username, password)
+            smtp.sendmail(current_app.config["MAIL_FROM"], [to_email], message.as_string())
+    except (smtplib.SMTPException, OSError) as exc:
+        current_app.logger.error("Failed to send email to %s via %s: %s", to_email, mail_server, exc)
+        return False
+    return True

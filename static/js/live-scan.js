@@ -11,6 +11,13 @@
   var statusLine = document.getElementById('scan-status-line');
   var csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 
+  var progressBox = document.getElementById('scan-progress');
+  var progressTrack = document.getElementById('scan-progress-track');
+  var progressFill = document.getElementById('scan-progress-fill');
+  var phaseEl = document.getElementById('scan-phase');
+  var timerEl = document.getElementById('scan-timer');
+  var percentEl = document.getElementById('scan-percent');
+
   var pollTimer = null;
   var chartTimer = null;
   var currentScanId = null;
@@ -61,7 +68,119 @@
     }
   }
 
+  // ---- live timer + progress bar ----
+
+  var tickTimer = null;
+  var elapsedBase = 0;      // seconds the server last told us had passed
+  var elapsedSyncedAt = 0;  // when (Date.now) we heard it
+  var timerRunning = false;
+
+  function pad(n) {
+    return n < 10 ? '0' + n : String(n);
+  }
+
+  function formatElapsed(totalSeconds) {
+    var s = Math.max(0, Math.floor(totalSeconds));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    return (h ? h + ':' + pad(m) : pad(m)) + ':' + pad(s % 60);
+  }
+
+  function renderTimer() {
+    var extra = timerRunning ? (Date.now() - elapsedSyncedAt) / 1000 : 0;
+    timerEl.textContent = formatElapsed(elapsedBase + extra);
+  }
+
+  // The server is the source of truth (it also knows about time spent paused);
+  // between polls the clock just keeps ticking locally so it looks live.
+  function syncTimer(seconds, running) {
+    elapsedBase = seconds;
+    elapsedSyncedAt = Date.now();
+    timerRunning = running;
+    renderTimer();
+  }
+
+  function startTicking() {
+    timerEl.classList.remove('finished');
+    progressBox.hidden = false;
+    if (!tickTimer) {
+      tickTimer = setInterval(renderTimer, 250);
+    }
+  }
+
+  function stopTicking() {
+    if (tickTimer) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
+    timerRunning = false;
+  }
+
+  // state: 'running' | 'paused' | 'completed' | 'failed' | 'stopped'
+  function setProgress(percent, phase, state) {
+    var known = typeof percent === 'number';
+    progressTrack.classList.toggle('indeterminate', !known && state === 'running');
+    ['paused', 'completed', 'failed', 'stopped'].forEach(function (s) {
+      progressTrack.classList.toggle('state-' + s, s === state);
+    });
+    progressFill.style.width = known ? percent + '%' : '';
+    if (known) {
+      progressTrack.setAttribute('aria-valuenow', String(percent));
+    } else {
+      progressTrack.removeAttribute('aria-valuenow');
+    }
+    percentEl.textContent = known ? percent + '%' : '';
+    phaseEl.textContent = phase;
+  }
+
+  function beginProgress() {
+    syncTimer(0, true);
+    startTicking();
+    setProgress(null, 'Starting', 'running');
+  }
+
+  // ---- keep the donut charts back until the scan is done ----
+  //
+  // The radar is the live view while a scan runs. The two donut charts (scan
+  // activity, finding trends) only show their result once the scan has finished,
+  // so they are held (dimmed, with a note) and not redrawn until then.
+
+  var chartsHeld = false;
+  var chartLabelIds = ['scan-chart-range-label', 'finding-chart-range-label'];
+  var settledLabels = {};
+  chartLabelIds.forEach(function (id) {
+    var el = document.getElementById(id);
+    settledLabels[id] = el ? el.textContent : '';
+  });
+
+  function chartPanels() {
+    return chartLabelIds.map(function (id) {
+      var el = document.getElementById(id);
+      return el ? el.closest('.ws-panel') : null;
+    }).filter(Boolean);
+  }
+
+  function setChartLabel(id, text) {
+    settledLabels[id] = text;
+    if (!chartsHeld) {
+      setText(id, text);
+    }
+  }
+
+  function holdCharts(hold) {
+    if (chartsHeld === hold) {
+      return;
+    }
+    chartsHeld = hold;
+    chartPanels().forEach(function (panel) { panel.classList.toggle('charts-pending', hold); });
+    chartLabelIds.forEach(function (id) {
+      setText(id, hold ? 'results appear when the scan finishes' : settledLabels[id]);
+    });
+  }
+
   function setRunningState(running, paused) {
+    holdCharts(running);
+    document.dispatchEvent(new CustomEvent('scan:state', { detail: { running: running, paused: paused } }));
     runBtn.disabled = running;
     pauseBtn.disabled = !running;
     stopBtn.disabled = !running;
@@ -79,6 +198,7 @@
     }
     statusLine.textContent = 'Starting scan...';
     setRunningState(true, false);
+    beginProgress();
 
     fetch('/workspace/scan/start', {
       method: 'POST',
@@ -90,6 +210,8 @@
         if (!res.ok) {
           statusLine.textContent = 'Error: ' + (res.body.error || 'could not start scan.');
           setRunningState(false, false);
+          stopTicking();
+          progressBox.hidden = true;
           return;
         }
         currentScanId = res.body.scan_id;
@@ -101,6 +223,8 @@
       .catch(function () {
         statusLine.textContent = 'Error: could not reach the server.';
         setRunningState(false, false);
+        stopTicking();
+        progressBox.hidden = true;
       });
   });
 
@@ -145,7 +269,23 @@
     }
   }
 
-  var STATUS_QUERY = 'query($id: Int!) { scanStatus(scanId: $id) { status resultSummary source paused } }';
+  var STATUS_FIELDS = 'scanId status resultSummary source paused targetDomain elapsedSeconds progressPercent phase';
+  var STATUS_QUERY = 'query($id: Int!) { scanStatus(scanId: $id) { ' + STATUS_FIELDS + ' } }';
+  var ACTIVE_QUERY = 'query { activeScan { ' + STATUS_FIELDS + ' } }';
+
+  function applyProgress(data, terminal) {
+    if (terminal) {
+      syncTimer(data.elapsedSeconds, false);
+      stopTicking();
+      timerEl.classList.add('finished');
+      var label = data.status === 'completed' ? 'Completed' : data.status === 'failed' ? 'Failed' : 'Stopped';
+      setProgress(data.status === 'completed' ? 100 : data.progressPercent, label + ' in ' + formatElapsed(data.elapsedSeconds), data.status);
+      return;
+    }
+    syncTimer(data.elapsedSeconds, !data.paused);
+    startTicking();
+    setProgress(data.progressPercent, data.paused ? 'Paused \u00b7 ' + data.phase : data.phase, data.paused ? 'paused' : 'running');
+  }
 
   function pollStatus() {
     if (!currentScanId) {
@@ -158,20 +298,38 @@
       }
       var terminal = data.status === 'completed' || data.status === 'failed' || data.status === 'stopped';
       setRunningState(!terminal, data.paused);
+      applyProgress(data, terminal);
 
       if (terminal) {
         stopPolling();
         stopChartPolling();
         refreshCharts();
+        setTimeout(refreshCharts, 1200);   // a second look in case the first request was unlucky
         var sourceNote = data.source === 'mock' ? ' (mock data — real tool not installed)' : data.source === 'real' ? ' (real scan)' : '';
         statusLine.textContent = 'Finished: ' + data.status + '. ' + (data.resultSummary || '') + sourceNote +
           '. Reloading to show the new rows...';
-        setTimeout(function () { window.location.reload(); }, 1800);
+        setTimeout(function () { window.location.reload(); }, 3500);
       } else {
         statusLine.textContent = (data.paused ? 'Paused' : 'Running') + '... ' + (data.resultSummary || '');
       }
     });
   }
+
+  // A scan keeps running on the server if the page is reloaded or reopened, so
+  // pick it up again instead of showing an idle panel with a live Run button.
+  graphql(ACTIVE_QUERY).then(function (res) {
+    var data = res.data && res.data.activeScan;
+    if (!data || currentScanId) {
+      return;
+    }
+    currentScanId = data.scanId;
+    input.value = data.targetDomain;
+    statusLine.textContent = (data.paused ? 'Paused' : 'Running') + '... ' + (data.resultSummary || '');
+    setRunningState(true, data.paused);
+    applyProgress(data, false);
+    startPolling();
+    startChartPolling();
+  });
 
   // ---- donut charts ----
 
@@ -269,8 +427,8 @@
         rangePicker.querySelectorAll('.chart-range-btn').forEach(function (b) { b.classList.remove('active'); });
         btn.classList.add('active');
         chartRange = btn.dataset.rangeValue;
-        setText('scan-chart-range-label', 'by status · ' + chartRange.toUpperCase());
-        setText('finding-chart-range-label', 'by severity · ' + chartRange.toUpperCase());
+        setChartLabel('scan-chart-range-label', 'by status · ' + chartRange.toUpperCase());
+        setChartLabel('finding-chart-range-label', 'by severity · ' + chartRange.toUpperCase());
         refreshCharts();
       });
     });
@@ -294,10 +452,17 @@
     'query($range: String, $targetId: Int) { liveCharts(range: $range, targetId: $targetId) { totalTargets totalAssets vulnerableCount needsReviewCount riskScore ' +
     'scanStatusTotals { key value } severityTotals { key value } } }';
 
+  var chartRequest = 0;
+
   function refreshCharts() {
+    var mine = chartRequest += 1;
     graphql(CHARTS_QUERY, { range: chartRange, targetId: chartTargetId }).then(function (res) {
       var data = res.data && res.data.liveCharts;
-      if (!data) {
+      if (!data && window.console) {
+        console.warn('Chart refresh returned no data', res.errors || res);
+      }
+      // A slower, older response must not overwrite a newer one (e.g. the final result).
+      if (!data || mine !== chartRequest) {
         return;
       }
       setText('stat-targets', data.totalTargets);
@@ -313,8 +478,20 @@
         risk: data.riskScore,
       });
 
+      if (chartsHeld) {
+        return;
+      }
       applyDonutData(scanChart, 'scan-donut-total', SCAN_LEGEND, toTotalsMap(data.scanStatusTotals));
       applyDonutData(findingChart, 'finding-donut-total', SEVERITY_LEGEND, toTotalsMap(data.severityTotals));
+    }).catch(function (error) {
+      if (window.console) {
+        console.warn('Chart refresh failed', error);
+      }
     });
   }
+
+  // Whenever no scan is running the charts must show the saved results. The numbers
+  // embedded in the page normally cover that; asking the server once more on load makes
+  // sure a missing or unreadable snapshot can never leave the charts empty.
+  refreshCharts();
 })();

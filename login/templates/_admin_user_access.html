@@ -1,0 +1,27 @@
+<div class="ud-section">
+  <h2>Role</h2>
+  <dl class="ud-grid">
+    <div><dt>Current role</dt><dd>{{ role_labels.get(subject.role, subject.role) }}</dd></div>
+  </dl>
+
+  {% if is_self %}
+  <p class="ud-note">This is your own account, so its role is locked. Ask another IT Administrator if it must change.</p>
+  {% else %}
+  <form method="POST" action="{{ url_for('admin_users.update_access', user_id=subject.id) }}" class="ud-inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <select name="role" class="role-select" aria-label="Role for {{ subject.username }}">
+      {% for r in roles %}
+      <option value="{{ r }}" {% if r == subject.role %}selected{% endif %}>{{ role_labels.get(r, r) }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn-mini btn-mini-save">Save role</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="ud-section">
+  <h2>What this role can do</h2>
+  <ul class="ud-list">
+    {% for item in capabilities %}<li>{{ item }}</li>{% endfor %}
+  </ul>
+</div>

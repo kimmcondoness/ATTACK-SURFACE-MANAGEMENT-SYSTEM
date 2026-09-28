@@ -3,19 +3,19 @@ import os
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_login import current_user, login_required
 
-from models import REPORT_TYPES, ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_SECURITY_TEAM, Report
+from models import REPORT_TYPES, ROLE_ANALYST, ROLE_IT_ADMIN, Report
 from services import report_service, target_service
 from utils.audit import log_action
 from utils.decorators import role_required
 
 reports_bp = Blueprint("reports", __name__, url_prefix="/api")
 
-_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_SECURITY_TEAM)
+_REPORT_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST)
 
 
 @reports_bp.route("/targets/<int:target_id>/reports", methods=["POST"])
 @login_required
-@role_required(*_ALL_ROLES)
+@role_required(*_REPORT_ROLES)
 def generate_report(target_id):
     target = target_service.get_target(target_id)
     if not target:
@@ -38,7 +38,7 @@ def generate_report(target_id):
 
 @reports_bp.route("/targets/<int:target_id>/reports", methods=["GET"])
 @login_required
-@role_required(*_ALL_ROLES)
+@role_required(*_REPORT_ROLES)
 def list_reports(target_id):
     target = target_service.get_target(target_id)
     if not target:
@@ -49,7 +49,7 @@ def list_reports(target_id):
 
 @reports_bp.route("/reports/<int:report_id>/download", methods=["GET"])
 @login_required
-@role_required(*_ALL_ROLES)
+@role_required(*_REPORT_ROLES)
 def download_report(report_id):
     report = Report.query.get(report_id)
     if not report or not os.path.exists(report.file_path):

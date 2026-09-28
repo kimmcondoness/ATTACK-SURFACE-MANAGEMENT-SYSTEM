@@ -1,4 +1,4 @@
--- Attack Surface Management System - MySQL schema
+-- Attack Surface Management System - MySQL 
 
 
 CREATE DATABASE IF NOT EXISTS asm_system
@@ -9,6 +9,7 @@ USE asm_system;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS monitor_events;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS reports;
 DROP TABLE IF EXISTS scans;
@@ -34,7 +35,7 @@ CREATE TABLE users (
   created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_users_username (username),
   UNIQUE KEY uq_users_email (email),
-  CONSTRAINT chk_users_role CHECK (role IN ('it_admin', 'cybersecurity_analyst', 'security_team', 'threat_intel_analyst'))
+  CONSTRAINT chk_users_role CHECK (role IN ('it_admin', 'cybersecurity_analyst', 'threat_intel_analyst'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -47,6 +48,8 @@ CREATE TABLE authorized_targets (
   authorized   TINYINT(1)   NOT NULL DEFAULT 0,
   owner_id     INT UNSIGNED NOT NULL,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  monitor_interval_days  INT      NULL,   -- continuous monitoring: re-scan every N days (NULL = off)
+  monitor_last_run_at    DATETIME NULL,    -- when the last scan chain started
   KEY ix_authorized_targets_owner_id (owner_id),
   CONSTRAINT fk_targets_owner FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -62,6 +65,9 @@ CREATE TABLE assets (
   url             VARCHAR(500) NULL,
   technologies    VARCHAR(500) NULL,
   discovery_date  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at    DATETIME     NULL,                     -- when discovery last returned this host
+  status          VARCHAR(20)  NOT NULL DEFAULT 'active', -- 'active' or 'missing'
+  missed_runs     INT          NOT NULL DEFAULT 0,        -- discovery runs in a row that missed it
   KEY ix_assets_target_id (target_id),
   CONSTRAINT fk_assets_target FOREIGN KEY (target_id) REFERENCES authorized_targets (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -102,9 +108,9 @@ CREATE TABLE vulnerabilities (
   CONSTRAINT chk_vulns_status CHECK (status IN ('open', 'in_progress', 'resolved', 'false_positive'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------------
+
 -- scans
--- ---------------------------------------------------------------------------
+
 CREATE TABLE scans (
   id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   target_id       INT UNSIGNED NOT NULL,
@@ -119,7 +125,7 @@ CREATE TABLE scans (
   KEY ix_scans_started_by (started_by),
   CONSTRAINT fk_scans_target FOREIGN KEY (target_id) REFERENCES authorized_targets (id) ON DELETE CASCADE,
   CONSTRAINT fk_scans_user FOREIGN KEY (started_by) REFERENCES users (id),
-  CONSTRAINT chk_scans_type CHECK (scan_type IN ('asset_discovery', 'port_discovery', 'vulnerability_scan')),
+  CONSTRAINT chk_scans_type CHECK (scan_type IN ('asset_discovery', 'port_discovery', 'vulnerability_scan', 'dork_scan')),
   CONSTRAINT chk_scans_status CHECK (status IN ('pending', 'running', 'paused', 'completed', 'failed', 'stopped'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -153,10 +159,6 @@ CREATE TABLE audit_logs (
   CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------------
--- seed data: default IT Admin account (username: admin / password: ChangeMe123!)
--- Change this password immediately after first login.
--- ---------------------------------------------------------------------------
 INSERT INTO users (username, email, first_name, last_name, password_hash, role, is_active_flag)
 VALUES (
   'admin',
@@ -167,3 +169,18 @@ VALUES (
   'it_admin',
   1
 );
+
+-- monitor_events: what continuous monitoring noticed changing between scans
+
+CREATE TABLE monitor_events (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  target_id   INT UNSIGNED NOT NULL,
+  event_type  VARCHAR(30)  NOT NULL,   -- asset_new, asset_missing, asset_back, finding_new, finding_resolved, finding_reopened
+  subject     VARCHAR(255) NOT NULL,
+  severity    VARCHAR(20)  NULL,
+  detail      TEXT         NULL,
+  created_at  DATETIME     NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_monitor_events_target_id (target_id),
+  KEY ix_monitor_events_created_at (created_at),
+  CONSTRAINT fk_events_target FOREIGN KEY (target_id) REFERENCES authorized_targets (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

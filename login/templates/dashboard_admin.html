@@ -8,30 +8,7 @@
 </head>
 <body>
   <div class="ws-shell">
-    <aside class="ws-sidebar">
-      <div class="ws-brand">
-        <span class="dot"></span>
-        <div class="ws-brand-text">
-          <strong>ATTACK SURFACE</strong>
-          <span>MANAGEMENT</span>
-        </div>
-      </div>
-
-      <nav class="ws-nav">
-        <a href="{{ url_for('auth_pages.admin_dashboard') }}" class="active">Dashboard</a>
-      </nav>
-
-      <div class="ws-sidebar-foot">
-        <div class="ws-who">
-          <span class="ws-role-badge">IT Admin</span>
-          <span>{{ user.first_name or user.username }}</span>
-        </div>
-        <form method="POST" action="{{ url_for('auth_pages.logout_page') }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="ws-btn-logout">Sign out</button>
-        </form>
-      </div>
-    </aside>
+    {% include "_admin_sidebar.html" %}
 
     <main class="ws-main">
       <div class="ws-topbar">
@@ -52,8 +29,8 @@
         <div class="ws-stat"><span class="n">{{ role_counts.total }}</span><span class="l">Users</span></div>
         <div class="ws-stat stat-admin"><span class="n">{{ role_counts.it_admin }}</span><span class="l">IT Admins</span></div>
         <div class="ws-stat stat-analyst"><span class="n">{{ role_counts.analyst }}</span><span class="l">Analysts</span></div>
-        <div class="ws-stat stat-security"><span class="n">{{ role_counts.security_team }}</span><span class="l">Security Team</span></div>
         <div class="ws-stat stat-threatintel"><span class="n">{{ role_counts.threat_intel }}</span><span class="l">Threat Intel</span></div>
+        <div class="ws-stat"><span class="n">{{ role_counts.deactivated }}</span><span class="l">Deactivated</span></div>
       </div>
 
       <section class="ws-panel">
@@ -62,18 +39,21 @@
           <span>{{ users|length }} total</span>
         </div>
         {% if users %}
-        <table>
+        <div class="table-tools">
+          <input type="search" id="table-search" class="table-search" placeholder="Filter users" aria-label="Filter users">
+          <span id="table-match-count" class="table-match-count" aria-live="polite"></span>
+        </div>
+        <table data-filterable>
           <thead>
             <tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {% for u in users %}
-            <tr>
-              <td>{{ u.first_name }} {{ u.last_name }}<br><span class="text-mono">{{ u.username }}</span></td>
+            <tr data-search="{{ u.first_name or '' }} {{ u.last_name or '' }} {{ u.username }} {{ u.email }} {{ u.role.replace('_', ' ') }} {{ 'active' if u.is_active_flag else 'deactivated' }}">
+              <td><a href="{{ url_for('admin_users.user_home', user_id=u.id) }}">{{ u.first_name }} {{ u.last_name }}</a><br><span class="text-mono">{{ u.username }}</span></td>
               <td>{{ u.email }}</td>
               <td>
                 {% if u.role == 'it_admin' %}<span class="pill pill-admin">Admin</span>
-                {% elif u.role == 'security_team' %}<span class="pill pill-security">Security</span>
                 {% elif u.role == 'threat_intel_analyst' %}<span class="pill pill-threatintel">Threat Intel</span>
                 {% else %}<span class="pill pill-analyst">Analyst</span>{% endif %}
               </td>
@@ -84,12 +64,13 @@
               <td class="text-mono">{{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '-' }}</td>
               <td>
                 <div class="row-actions">
+                  <a class="btn-mini btn-mini-save" href="{{ url_for('admin_users.user_home', user_id=u.id) }}">Manage</a>
                   <form method="POST" action="{{ url_for('auth_pages.admin_update_user_role', user_id=u.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <select name="role" class="role-select">
                       {% for r in roles %}
                       <option value="{{ r }}" {% if r == u.role %}selected{% endif %}>
-                        {% if r == 'it_admin' %}Admin{% elif r == 'security_team' %}Security{% elif r == 'threat_intel_analyst' %}Threat Intel{% else %}Analyst{% endif %}
+                        {% if r == 'it_admin' %}Admin{% elif r == 'threat_intel_analyst' %}Threat Intel{% else %}Analyst{% endif %}
                       </option>
                       {% endfor %}
                     </select>
@@ -116,11 +97,39 @@
         {% else %}
         <p class="empty-row">No users yet.</p>
         {% endif %}
+        <p class="empty-row" id="table-no-match" hidden>No users match that filter.</p>
+      </section>
+
+      <section class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Recent activity</h2>
+          <span>Latest {{ recent_activity|length }} events</span>
+        </div>
+        {% if recent_activity %}
+        <table>
+          <thead>
+            <tr><th>When (UTC)</th><th>Action</th><th>Detail</th><th>By</th></tr>
+          </thead>
+          <tbody>
+            {% for entry in recent_activity %}
+            <tr>
+              <td class="text-mono">{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') if entry.timestamp else '-' }}</td>
+              <td>{{ entry.action }}</td>
+              <td class="text-mono">{{ entry.detail or '-' }}</td>
+              <td>{{ entry.actor }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">No activity recorded yet.</p>
+        {% endif %}
       </section>
     </main>
   </div>
 
   <script src="{{ url_for('static', filename='js/confirm-submit.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/table-filter.js') }}"></script>
 
   {% include "_cookie_banner.html" %}
 </body>

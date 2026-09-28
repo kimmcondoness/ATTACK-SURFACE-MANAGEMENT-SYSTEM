@@ -1,0 +1,25 @@
+<div class="ud-section">
+  <h2>Authorized targets</h2>
+  {% if targets %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Domain</th><th>Authorization</th><th>Assets</th><th>Live findings</th><th>Added</th></tr>
+      </thead>
+      <tbody>
+        {% for t in targets %}
+        <tr>
+          <td class="text-mono">{{ t.domain }}</td>
+          <td>{% if t.authorized %}<span class="pill pill-active">Authorized</span>{% else %}<span class="pill pill-inactive">Pending</span>{% endif %}</td>
+          <td>{{ t.assets }}</td>
+          <td>{{ t.live_findings }}</td>
+          <td class="text-mono">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-row">{{ subject_name }} has not added any targets.</p>
+  {% endif %}
+</div>

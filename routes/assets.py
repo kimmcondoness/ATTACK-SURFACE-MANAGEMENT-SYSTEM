@@ -1,13 +1,13 @@
 from flask import Blueprint, jsonify
 from flask_login import login_required
 
-from models import ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_SECURITY_TEAM
+from models import ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_THREAT_INTEL
 from services import asset_service, target_service
 from utils.decorators import role_required
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/api")
 
-_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_SECURITY_TEAM)
+_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_THREAT_INTEL)
 
 
 @assets_bp.route("/targets/<int:target_id>/assets", methods=["GET"])

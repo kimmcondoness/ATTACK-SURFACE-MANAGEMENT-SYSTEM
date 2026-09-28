@@ -5,7 +5,7 @@ from extensions import db
 from models import ROLE_IT_ADMIN, ROLES, User
 from utils.audit import log_action
 from utils.decorators import role_required
-from utils.validators import ValidationError, validate_role
+from utils.validators import ValidationError, validate_password, validate_role
 
 users_bp = Blueprint("users", __name__, url_prefix="/api/users")
 
@@ -33,6 +33,7 @@ def create_user():
 
     try:
         validate_role(role, ROLES)
+        validate_password(password)
     except ValidationError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -66,6 +67,10 @@ def update_user(user_id):
     if "is_active" in payload:
         user.is_active_flag = bool(payload["is_active"])
     if "password" in payload and payload["password"]:
+        try:
+            validate_password(payload["password"])
+        except ValidationError as exc:
+            return jsonify({"error": str(exc)}), 400
         user.set_password(payload["password"])
 
     db.session.commit()

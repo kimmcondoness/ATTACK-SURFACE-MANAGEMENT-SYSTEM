@@ -262,7 +262,7 @@ input[type="password"]::placeholder {
 }
 
 .password-field input {
-  padding-right: 3.6rem;
+  padding-right: 2.9rem;
 }
 
 .btn-toggle-password {
@@ -270,19 +270,73 @@ input[type="password"]::placeholder {
   top: 50%;
   right: 0.4rem;
   transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--muted);
   font-size: 0.75rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  padding: 0.35rem 0.5rem;
+  padding: 0.35rem;
+  border-radius: 3px;
   cursor: pointer;
 }
 
-.btn-toggle-password:hover {
+.btn-toggle-password:hover,
+.btn-toggle-password[aria-pressed="true"] {
   color: var(--accent-dark);
+}
+
+.btn-toggle-password:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.password-rules {
+  list-style: none;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.password-rules li {
+  margin-bottom: 0.15rem;
+}
+
+.password-rules li::before {
+  content: "\25CB\00a0";
+}
+
+.password-rules .rule-met {
+  color: var(--accent-dark);
+}
+
+.password-rules .rule-met::before {
+  content: "\2713\00a0";
+}
+
+.password-rules .rule-bad {
+  color: var(--error-text);
+}
+
+.password-rules .rule-bad::before {
+  content: "\2715\00a0";
+}
+
+.match-hint {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin: 0.4rem 0 0;
+}
+
+.match-ok {
+  color: var(--accent-dark);
+}
+
+.match-bad {
+  color: var(--error-text);
 }
 
 .otp-input {

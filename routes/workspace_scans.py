@@ -1,12 +1,9 @@
-import threading
-
 from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 
 from extensions import db
 from models import ROLE_ANALYST, ROLE_IT_ADMIN, AuthorizedTarget, Scan
-from scanner.base import ScanControl
-from services import job_registry, scan_service
+from services import job_registry, scan_runner
 from utils.audit import log_action
 from utils.validators import ValidationError, extract_domain
 
@@ -23,22 +20,6 @@ def _own_scan_or_none(scan_id):
     if not target or (target.owner_id != current_user.id and current_user.role != ROLE_IT_ADMIN):
         return None
     return scan
-
-
-def _run_chain_in_background(app, target_id, user_id, control, lead_scan_id):
-    with app.app_context():
-        target = AuthorizedTarget.query.get(target_id)
-        lead_scan = Scan.query.get(lead_scan_id)
-        try:
-            scan_service.run_scan_chain(target, user_id, control, lead_scan=lead_scan)
-        except Exception as exc:  # noqa: BLE001 - surface any scanner crash instead of losing the thread silently
-            lead_scan = Scan.query.get(lead_scan_id)
-            if lead_scan and lead_scan.status not in ("completed", "failed", "stopped"):
-                lead_scan.status = "failed"
-                lead_scan.result_summary = f"Scan crashed: {exc}"
-                db.session.commit()
-        finally:
-            job_registry.unregister(lead_scan_id)
 
 
 @workspace_scans_bp.route("/start", methods=["POST"])
@@ -64,18 +45,7 @@ def start_scan():
         target.authorized = True
         db.session.commit()
 
-    lead_scan = Scan(target_id=target.id, scan_type="asset_discovery", status="pending", started_by=current_user.id)
-    db.session.add(lead_scan)
-    db.session.commit()
-
-    control = ScanControl()
-    thread = threading.Thread(
-        target=_run_chain_in_background,
-        args=(current_app._get_current_object(), target.id, current_user.id, control, lead_scan.id),
-        daemon=True,
-    )
-    job_registry.register(lead_scan.id, thread, control)
-    thread.start()
+    lead_scan = scan_runner.start_chain(current_app._get_current_object(), target, current_user.id)
 
     log_action(current_user.id, "scan_chain_started", detail=f"target_id={target.id} scan_id={lead_scan.id} domain={domain}")
     return jsonify({"scan_id": lead_scan.id, "target_id": target.id, "domain": domain}), 201

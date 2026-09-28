@@ -32,10 +32,22 @@ class Config:
     OTP_LENGTH = 6
     OTP_MAX_ATTEMPTS = 5
 
-    # How long a "this device already completed MFA" cookie stays valid, so
-    # frequent sign-ins from the same browser aren't re-prompted for an OTP
-    # every time. Password + CAPTCHA are still required on every sign-in.
-    DEVICE_TRUST_DAYS = 30
+    # The email code is asked for once a week per device: after a correct code the
+    # browser is trusted for this many days, counted from that moment. Signing in
+    # again on a trusted device does NOT extend it, so the code is always due again
+    # a week after it was last entered. Password + CAPTCHA are still required on
+    # every sign-in.
+    DEVICE_TRUST_DAYS = 7
+
+    # Continuous monitoring: a background thread re-scans targets whose schedule is due,
+    # and emails the owner when a monitored target changes in a way that matters.
+    MONITOR_SCHEDULER_ENABLED = True
+    MONITOR_POLL_SECONDS = 60
+    MONITOR_MAX_CONCURRENT_SCANS = 1
+    MONITOR_ALERT_EMAILS = True
+
+    # Add any missing columns/tables to an existing database at start-up.
+    AUTO_UPGRADE_SCHEMA = True
 
     # Rate limiting (per-IP). In-memory storage is fine for a single-process
     # dev/small deployment; swap for Redis (RATELIMIT_STORAGE_URI=redis://...)
@@ -68,6 +80,9 @@ class TestingConfig(Config):
     WTF_CSRF_ENABLED = False
     SESSION_COOKIE_SECURE = False
     RATELIMIT_ENABLED = False
+    MONITOR_SCHEDULER_ENABLED = False
+    MONITOR_ALERT_EMAILS = False
+    AUTO_UPGRADE_SCHEMA = False
 
 
 class ProductionConfig(Config):

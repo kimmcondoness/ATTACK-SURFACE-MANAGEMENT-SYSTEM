@@ -6,7 +6,7 @@
 ## Identity
 
 An internal cybersecurity operations tool for Bluesify Solutions Sdn. Bhd. — used by IT
-Administrators, Cybersecurity Analysts, and the Security Team to discover, monitor and
+Administrators, Cybersecurity Analysts, and Threat Intelligence Analysts to discover, monitor and
 assess their own authorized internet-facing assets. This is a working analyst tool, not a
 public-facing marketing site or SaaS landing page. It should read like a SOC console: dense,
 factual, and quick to scan under pressure — not like a product pitch.

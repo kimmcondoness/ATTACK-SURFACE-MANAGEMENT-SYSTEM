@@ -1,0 +1,47 @@
+<div class="ud-section">
+  <h2>Identity</h2>
+  <details class="ud-edit"{{ ' open' if edit_open else '' }}>
+    <summary>Change name &amp; email</summary>
+    <form method="POST" action="{{ url_for('admin_users.update_profile', user_id=subject.id) }}" class="ud-form" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="ud-form-row">
+        <label>First name
+          <input type="text" name="first_name" value="{{ form.get('first_name', subject.first_name or '') }}" maxlength="80" required>
+        </label>
+        <label>Last name
+          <input type="text" name="last_name" value="{{ form.get('last_name', subject.last_name or '') }}" maxlength="80" required>
+        </label>
+      </div>
+      <div class="ud-form-row">
+        <label>Username
+          <input type="text" name="username" value="{{ form.get('username', subject.username) }}" maxlength="30" required>
+        </label>
+        <label>Email
+          <input type="text" name="email" value="{{ form.get('email', subject.email) }}" maxlength="120" required>
+        </label>
+      </div>
+      <p class="ud-note">Only an IT Administrator can change these. Usernames are 3-30 letters, numbers, dots, underscores or hyphens, and both username and email must be unique.</p>
+      <button type="submit" class="btn-mini btn-mini-save">Save changes</button>
+    </form>
+  </details>
+
+  <dl class="ud-grid">
+    <div><dt>Display name</dt><dd>{{ subject_name }}</dd></div>
+    <div><dt>Username</dt><dd class="text-mono">{{ subject.username }}</dd></div>
+    <div><dt>Email</dt><dd>{{ subject.email }}</dd></div>
+    <div><dt>First name</dt><dd>{{ subject.first_name or '-' }}</dd></div>
+    <div><dt>Last name</dt><dd>{{ subject.last_name or '-' }}</dd></div>
+    <div><dt>User ID</dt><dd class="text-mono">{{ subject.id }}</dd></div>
+  </dl>
+</div>
+
+<div class="ud-section">
+  <h2>Account</h2>
+  <dl class="ud-grid">
+    <div><dt>Role</dt><dd>{{ role_labels.get(subject.role, subject.role) }}</dd></div>
+    <div><dt>Status</dt><dd>{% if subject.is_active_flag %}<span class="pill pill-active">Active</span>{% else %}<span class="pill pill-disabled">Locked</span>{% endif %}</dd></div>
+    <div><dt>Joined</dt><dd class="text-mono">{{ subject.created_at.strftime('%Y-%m-%d %H:%M') if subject.created_at else '-' }}</dd></div>
+    <div><dt>Last sign-in</dt><dd class="text-mono">{{ last_sign_in.strftime('%Y-%m-%d %H:%M') if last_sign_in else 'Never' }}</dd></div>
+    <div><dt>Authorized targets</dt><dd>{{ target_count }}</dd></div>
+  </dl>
+</div>

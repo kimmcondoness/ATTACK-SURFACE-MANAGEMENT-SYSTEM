@@ -33,14 +33,14 @@
 
       <div class="ws-stats">
         <div class="ws-stat"><span class="n">{{ summary.total_targets }}</span><span class="l">Targets</span></div>
-        <div class="ws-stat"><span class="n">6</span><span class="l">Categories</span></div>
+        <div class="ws-stat"><span class="n">5</span><span class="l">Categories</span></div>
         <div class="ws-stat"><span class="n">{{ summary.total_vulnerabilities }}</span><span class="l">Open findings</span></div>
         <div class="ws-stat"><span class="n">{{ summary.risk_score }}</span><span class="l">Risk score</span></div>
       </div>
 
       <p class="ws-section-label">Workspace sections</p>
       <div class="ws-category-grid">
-        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">
+        <a class="ws-category-card" href="{{ url_for('inventory.inventory_page', slug='subdomains') }}">
           <div class="ws-category-head">
             <span class="ws-category-icon">R</span>
             <h2>Recon</h2>
@@ -49,7 +49,7 @@
           <p>Domains &middot; Subdomains &middot; IP Addresses</p>
         </a>
 
-        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">
+        <a class="ws-category-card" href="{{ url_for('inventory.inventory_page', slug='web-applications') }}">
           <div class="ws-category-head">
             <span class="ws-category-icon">W</span>
             <h2>Web</h2>
@@ -67,7 +67,7 @@
           <p>Curated dork queries for exposed files, admin panels, secrets and more &mdash; most EASM tools skip this.</p>
         </a>
 
-        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#network">
+        <a class="ws-category-card" href="{{ url_for('inventory.inventory_page', slug='open-ports') }}">
           <div class="ws-category-head">
             <span class="ws-category-icon">N</span>
             <h2>Network</h2>
@@ -76,33 +76,14 @@
           <p>Open Ports &middot; Public Services</p>
         </a>
 
-        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#findings">
+        <a class="ws-category-card" href="{{ url_for('findings.findings_page') }}">
           <div class="ws-category-head">
             <span class="ws-category-icon">V</span>
-            <h2>Vulnerabilities</h2>
+            <h2>Findings &amp; CVE Report</h2>
             <span class="count">{{ summary.total_vulnerabilities }}</span>
           </div>
-          <p>Severity triage &middot; CVE tracking &middot; Status review</p>
+          <p>Severity triage &middot; CVE tracking &middot; PDF/CSV reports</p>
         </a>
-
-        <a class="ws-category-card" href="{{ url_for('auth_pages.workspace_dashboard') }}#reports">
-          <div class="ws-category-head">
-            <span class="ws-category-icon">T</span>
-            <h2>Reports</h2>
-            <span class="count">{{ findings|length }}</span>
-          </div>
-          <p>Export findings as JSON, CSV or Markdown</p>
-        </a>
-
-        {% if user.role in ('threat_intel_analyst', 'it_admin') %}
-        <a class="ws-category-card" href="{{ url_for('threat_intel.threat_intel_page') }}">
-          <div class="ws-category-head">
-            <span class="ws-category-icon">I</span>
-            <h2>Threat Intelligence</h2>
-          </div>
-          <p>CVSS &middot; CISA KEV &middot; public exploit signals, prioritized across every target</p>
-        </a>
-        {% endif %}
       </div>
 
       <p class="ws-hint">Pick a section from the sidebar — or click a category above — to see the full dashboard.</p>

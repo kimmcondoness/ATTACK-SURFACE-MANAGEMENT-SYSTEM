@@ -1,14 +1,14 @@
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from models import ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_SECURITY_TEAM, SEVERITIES, Vulnerability
+from models import ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_THREAT_INTEL, SEVERITIES, VULN_STATUSES, Vulnerability
 from services import vulnerability_service
 from utils.audit import log_action
 from utils.decorators import role_required
 
 vulnerabilities_bp = Blueprint("vulnerabilities", __name__, url_prefix="/api/vulnerabilities")
 
-_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_SECURITY_TEAM)
+_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_THREAT_INTEL)
 
 
 @vulnerabilities_bp.route("", methods=["GET"])
@@ -26,7 +26,7 @@ def list_vulnerabilities():
 
 @vulnerabilities_bp.route("/<int:vulnerability_id>/status", methods=["PUT"])
 @login_required
-@role_required(ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_SECURITY_TEAM)
+@role_required(ROLE_IT_ADMIN, ROLE_ANALYST)
 def update_status(vulnerability_id):
     vuln = Vulnerability.query.get(vulnerability_id)
     if not vuln:
@@ -34,7 +34,7 @@ def update_status(vulnerability_id):
 
     payload = request.get_json(silent=True) or {}
     status = payload.get("status", "")
-    if status not in ("open", "in_progress", "resolved", "false_positive"):
+    if status not in VULN_STATUSES:
         return jsonify({"error": "Invalid status."}), 400
 
     vuln = vulnerability_service.update_vulnerability_status(vuln, status)

@@ -7,6 +7,14 @@
   <link href="{{ url_for('static', filename='css/workspace.css') }}" rel="stylesheet">
 </head>
 <body>
+  {% macro cve_links(field) -%}
+    {%- set ids = cve_list(field) -%}
+    {%- if ids -%}
+      {%- for cve in ids -%}
+        <a href="https://nvd.nist.gov/vuln/detail/{{ cve }}" target="_blank" rel="noopener noreferrer" title="Open {{ cve }} in the NIST National Vulnerability Database">{{ cve }}</a>{% if not loop.last %}<br>{% endif %}
+      {%- endfor -%}
+    {%- else -%}&mdash;{%- endif -%}
+  {%- endmacro %}
   <div class="ws-shell">
     {% include "_workspace_sidebar.html" %}
 
@@ -52,11 +60,11 @@
       {% if kev_matches %}
       <section class="ws-panel">
         <div class="ws-panel-head">
-          <h2>Your exposure matched against CISA KEV</h2>
+          <h2>Exposure matched against CISA KEV</h2>
           <span>{{ kev_matches|length }} urgent</span>
         </div>
         <p class="ws-report-summary">
-          These are your own findings whose CVE is confirmed by CISA to be actively exploited in the wild right now.
+          These are findings across all targets whose CVE is confirmed by CISA to be actively exploited in the wild right now.
           Treat these as top priority regardless of severity label.
         </p>
         <table>
@@ -66,7 +74,7 @@
           <tbody>
             {% for v in kev_matches %}
             <tr>
-              <td class="text-mono"><a href="https://nvd.nist.gov/vuln/detail/{{ v.cve }}" target="_blank" rel="noopener">{{ v.cve }}</a></td>
+              <td class="text-mono nowrap">{{ cve_links(v.cve) }}</td>
               <td class="text-mono">{{ target_map.get(asset_target_map.get(v.asset_id), 'unknown') }}</td>
               <td>{{ v.title }}</td>
               <td class="text-mono">{{ v.cvss_score if v.cvss_score is not none else '-' }}</td>
@@ -80,42 +88,61 @@
       <section class="ws-panel">
         <div class="ws-panel-head">
           <h2>Prioritized findings</h2>
-          <span>{{ prioritized_total }} total</span>
+          <span>{{ prioritized_total }} total &middot; <a href="{{ url_for('threat_intel.briefing_csv') }}">Export briefing (CSV)</a></span>
         </div>
         {% if prioritized %}
-        <table>
+        <p class="ws-report-summary">
+          <b>EPSS</b> is FIRST.org's estimate of the chance a CVE is exploited in the next 30 days. Read it next to CVSS
+          (how severe) and KEV (already exploited): a modest CVSS with a high EPSS is worth fixing early.
+        </p>
+
+        <div class="table-tools filter-row">
+          <input type="search" id="table-search" class="table-search" placeholder="Filter by keyword, CVE, or domain..." aria-label="Filter findings by keyword, CVE, or domain" autocomplete="off">
+          <label class="filter-select-label" for="severity-filter">Severity</label>
+          <select id="severity-filter" class="table-select" aria-label="Filter findings by severity">
+            <option value="">All</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <span id="table-match-count" class="table-match-count" aria-live="polite"></span>
+        </div>
+
+        <div class="table-scroll">
+        <table class="ti-table" data-filterable>
           <thead>
-            <tr><th>Priority</th><th>CVE</th><th>Severity</th><th>Target</th><th>Title</th><th>Flags</th><th>Status</th></tr>
+            <tr><th>Priority</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>EPSS</th><th>Target</th><th>Title</th><th>Flags</th><th>Status</th></tr>
           </thead>
           <tbody>
             {% for v in prioritized %}
-            <tr>
+            {% set domain = target_map.get(asset_target_map.get(v.asset_id), 'unknown') %}
+            {% set epss = epss_for(v) %}
+            <tr data-severity="{{ v.severity }}" data-search="{{ cve_list(v.cve)|join(' ') }} {{ v.severity }} {{ domain }} {{ v.title }} {{ v.status.replace('_', ' ') }}{{ ' kev' if v.kev else '' }}{{ ' exploit' if v.exploit_available else '' }}">
               <td class="text-mono">{{ priority(v) }}</td>
-              <td class="text-mono">
-                {% if v.cve %}<a href="https://nvd.nist.gov/vuln/detail/{{ v.cve }}" target="_blank" rel="noopener">{{ v.cve }}</a>{% else %}&mdash;{% endif %}
-              </td>
+              <td class="text-mono nowrap">{{ cve_links(v.cve) }}</td>
               <td><span class="pill pill-{{ v.severity }}">{{ v.severity }}</span></td>
-              <td class="text-mono">{{ target_map.get(asset_target_map.get(v.asset_id), 'unknown') }}</td>
+              <td class="text-mono">{{ '%.1f'|format(v.cvss_score) if v.cvss_score is not none else '-' }}</td>
+              <td>
+                {% if epss %}
+                <span class="epss-badge epss-{{ epss_level(epss.epss) }}" title="EPSS {{ '%.2f'|format(epss.epss * 100) }}%: estimated chance of exploitation in the next 30 days. Higher than {{ '%.0f'|format(epss.percentile * 100) }}% of all scored CVEs.">{{ '%.1f'|format(epss.epss * 100) }}%</span>
+                {% else %}
+                <span class="epss-none" title="{{ 'No EPSS score is published for this CVE, or FIRST.org could not be reached.' if v.cve else 'No CVE, so no EPSS score.' }}">&mdash;</span>
+                {% endif %}
+              </td>
+              <td class="text-mono">{{ domain }}</td>
               <td>{{ v.title }}</td>
               <td>
                 {% if v.kev %}<span class="pill pill-failed">KEV</span>{% endif %}
                 {% if v.exploit_available %}<span class="pill pill-medium">Exploit</span>{% endif %}
               </td>
-              <td>
-                <form method="POST" action="{{ url_for('threat_intel.update_status', vuln_id=v.id) }}" class="row-actions">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <select name="status" class="role-select">
-                    {% for s in status_choices %}
-                    <option value="{{ s }}" {% if s == v.status %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>
-                    {% endfor %}
-                  </select>
-                  <button type="submit" class="btn-mini btn-mini-save">Save</button>
-                </form>
-              </td>
+              <td><span class="status-badge status-{{ v.status }}">{{ v.status.replace('_', ' ') }}</span></td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
+        <p class="empty-row" id="table-no-match" hidden>No findings match those filters.</p>
         {% if prioritized_total > prioritized|length %}
         <p class="empty-row">Showing the top {{ prioritized|length }} of {{ prioritized_total }} by priority.</p>
         {% endif %}
@@ -127,7 +154,7 @@
       <section class="ws-panel" style="margin-bottom: 0;">
         <div class="ws-panel-head">
           <h2>CISA KEV catalog &mdash; recent additions</h2>
-          <span>General awareness, not limited to your assets</span>
+          <span>General awareness, not limited to monitored assets</span>
         </div>
         {% if kev_feed %}
         <table>
@@ -153,6 +180,7 @@
   </div>
 
   <script src="{{ url_for('static', filename='js/workspace-charts.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/table-filter.js') }}"></script>
 
   {% include "_cookie_banner.html" %}
 </body>

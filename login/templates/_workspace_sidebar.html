@@ -8,57 +8,56 @@
   </div>
 
   <nav class="ws-nav">
-    <a href="{{ url_for('auth_pages.dashboard_placeholder') }}" class="{{ 'active' if active_nav == 'overview' else '' }}">Overview</a>
-    <a href="{{ url_for('auth_pages.workspace_dashboard') }}" class="{{ 'active' if active_nav == 'dashboard' else '' }}">Dashboard</a>
-
-    {% if nav_counts is defined %}
-    <details class="ws-group" open>
-      <summary>Recon <span class="count">{{ nav_counts.domains + nav_counts.subdomains + nav_counts.ips }}</span></summary>
-      <div class="ws-subnav">
-        <a href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">Domains <span class="count">{{ nav_counts.domains }}</span></a>
-        <a href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">Subdomains <span class="count">{{ nav_counts.subdomains }}</span></a>
-        <a href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">IP Addresses <span class="count">{{ nav_counts.ips }}</span></a>
-      </div>
-    </details>
-
-    <details class="ws-group">
-      <summary>Web <span class="count">{{ nav_counts.webapps }}</span></summary>
-      <div class="ws-subnav">
-        <a href="{{ url_for('auth_pages.workspace_dashboard') }}#assets">Web Applications <span class="count">{{ nav_counts.webapps }}</span></a>
-        <span class="ws-subitem">APIs <span class="tag-planned">Planned</span></span>
-      </div>
-    </details>
-    {% endif %}
-
-    <a href="{{ url_for('auth_pages.workspace_dashboard') }}#dorking" class="ws-nav-featured">
-      Google Dorking
-      {% if dork_count is defined %}<span class="count">{{ dork_count }}</span>{% endif %}
-    </a>
-
-    {% if nav_counts is defined %}
-    <details class="ws-group">
-      <summary>Network <span class="count">{{ nav_counts.ports }}</span></summary>
-      <div class="ws-subnav">
-        <a href="{{ url_for('auth_pages.workspace_dashboard') }}#network">Open Ports <span class="count">{{ nav_counts.ports }}</span></a>
-        <a href="{{ url_for('auth_pages.workspace_dashboard') }}#network">Public Services <span class="count">{{ nav_counts.services }}</span></a>
-      </div>
-    </details>
-    {% endif %}
-
-    <a href="{{ url_for('auth_pages.workspace_dashboard') }}#findings">Findings</a>
-    <a href="{{ url_for('auth_pages.workspace_dashboard') }}#reports">Reports</a>
-
-    {% if user.role in ('threat_intel_analyst', 'it_admin') %}
+    {% if user.role == 'threat_intel_analyst' %}
     <a href="{{ url_for('threat_intel.threat_intel_page') }}" class="{{ 'active' if active_nav == 'threat_intel' else '' }}">Threat Intelligence</a>
+    <a href="{{ url_for('threat_intel.briefing_csv') }}">Threat Briefing (CSV)</a>
+    {% else %}
+      <a href="{{ url_for('auth_pages.dashboard_placeholder') }}" class="{{ 'active' if active_nav == 'overview' else '' }}">Overview</a>
+      <a href="{{ url_for('auth_pages.workspace_dashboard') }}" class="{{ 'active' if active_nav == 'dashboard' else '' }}">Dashboard</a>
+
+      {% set an = active_nav or '' %}
+      {% if nav_counts is defined %}
+      <details class="ws-group" {{ 'open' if an in ('inv-domains', 'inv-subdomains', 'inv-ip-addresses') or not an.startswith('inv-') else '' }}>
+        <summary>Recon <span class="count">{{ nav_counts.domains + nav_counts.subdomains + nav_counts.ips }}</span></summary>
+        <div class="ws-subnav">
+          <a href="{{ url_for('inventory.inventory_page', slug='domains') }}" class="{{ 'active' if an == 'inv-domains' else '' }}">Domains <span class="count">{{ nav_counts.domains }}</span></a>
+          <a href="{{ url_for('inventory.inventory_page', slug='subdomains') }}" class="{{ 'active' if an == 'inv-subdomains' else '' }}">Subdomains <span class="count">{{ nav_counts.subdomains }}</span></a>
+          <a href="{{ url_for('inventory.inventory_page', slug='ip-addresses') }}" class="{{ 'active' if an == 'inv-ip-addresses' else '' }}">IP Addresses <span class="count">{{ nav_counts.ips }}</span></a>
+        </div>
+      </details>
+
+      <details class="ws-group" {{ 'open' if an == 'inv-web-applications' else '' }}>
+        <summary>Web <span class="count">{{ nav_counts.webapps }}</span></summary>
+        <div class="ws-subnav">
+          <a href="{{ url_for('inventory.inventory_page', slug='web-applications') }}" class="{{ 'active' if an == 'inv-web-applications' else '' }}">Web Applications <span class="count">{{ nav_counts.webapps }}</span></a>
+          <span class="ws-subitem">APIs <span class="tag-planned">Planned</span></span>
+        </div>
+      </details>
+      {% endif %}
+
+      <a href="{{ url_for('auth_pages.workspace_dashboard') }}#dorking" class="ws-nav-featured">
+        Google Dorking
+        {% if dork_count is defined %}<span class="count">{{ dork_count }}</span>{% endif %}
+      </a>
+
+      {% if nav_counts is defined %}
+      <details class="ws-group" {{ 'open' if an in ('inv-open-ports', 'inv-public-services') else '' }}>
+        <summary>Network <span class="count">{{ nav_counts.ports }}</span></summary>
+        <div class="ws-subnav">
+          <a href="{{ url_for('inventory.inventory_page', slug='open-ports') }}" class="{{ 'active' if an == 'inv-open-ports' else '' }}">Open Ports <span class="count">{{ nav_counts.ports }}</span></a>
+          <a href="{{ url_for('inventory.inventory_page', slug='public-services') }}" class="{{ 'active' if an == 'inv-public-services' else '' }}">Public Services <span class="count">{{ nav_counts.services }}</span></a>
+        </div>
+      </details>
+      {% endif %}
+
+      <a href="{{ url_for('findings.findings_page') }}" class="{{ 'active' if an == 'findings' else '' }}">Findings &amp; CVE Report</a>
     {% endif %}
   </nav>
 
   <div class="ws-sidebar-foot">
     <div class="ws-who">
       <span class="ws-role-badge">
-        {% if user.role == 'security_team' %}Security Team
-        {% elif user.role == 'threat_intel_analyst' %}Threat Intel
-        {% else %}Analyst{% endif %}
+        {% if user.role == 'threat_intel_analyst' %}Threat Intel{% else %}Analyst{% endif %}
       </span>
       <span>{{ user.first_name or user.username }}</span>
     </div>

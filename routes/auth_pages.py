@@ -8,28 +8,30 @@ from flask_login import current_user, login_required, login_user, logout_user
 
 from extensions import bcrypt, db, limiter
 from models import (
+    MONITOR_INTERVALS,
     Asset,
     AuthorizedTarget,
-    PortService,
     ROLE_ANALYST,
     ROLE_IT_ADMIN,
-    ROLE_SECURITY_TEAM,
     ROLE_THREAT_INTEL,
     ROLES,
     Scan,
     User,
+    VULN_STATUSES,
     Vulnerability,
 )
 from services.chart_service import RANGES as CHART_RANGES, normalize_range, scan_status_totals, severity_totals
-from services.dork_service import dork_categories_for_domain, total_dork_count
+from services import inventory_service, monitor_service, radar_service, user_admin_service
+from services.dork_service import dork_categories_for_domain, exposed_dork_labels, total_dork_count
 from services.report_service import list_reports_for_target
 from services.risk_service import risk_score
+from services.vulnerability_service import findings_for_targets
 from utils.audit import log_action
 from utils.captcha import generate_captcha, verify_captcha
 from utils.device_trust import COOKIE_NAME as DEVICE_TRUST_COOKIE, set_device_trust_cookie, verify_device_trust_token
 from utils.mailer import send_otp_email
 from utils.otp import generate_otp, verify_otp
-from utils.validators import ValidationError, validate_role
+from utils.validators import EMAIL_RE, USERNAME_RE, ValidationError, validate_password, validate_role
 
 auth_pages_bp = Blueprint("auth_pages", __name__)
 
@@ -53,10 +55,11 @@ _PENDING_RESET_KEYS = (
 )
 _OTP_MAX_ATTEMPTS = 5
 _OTP_RESEND_COOLDOWN_SECONDS = 60
-_SIGNUP_ROLES = (ROLE_ANALYST, ROLE_SECURITY_TEAM, ROLE_THREAT_INTEL, ROLE_IT_ADMIN)
+# IT Administrators are never self-registered; an existing admin assigns that role.
+_SIGNUP_ROLES = (ROLE_ANALYST, ROLE_THREAT_INTEL)
 
-_USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,30}$")
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_USERNAME_RE = USERNAME_RE
+_EMAIL_RE = EMAIL_RE
 
 
 def _new_captcha():
@@ -156,8 +159,9 @@ def login_page():
         login_user(user)
         session.permanent = True
         log_action(user.id, "login_success", detail="trusted device, MFA skipped")
-        resp = redirect(url_for("auth_pages.dashboard_placeholder"))
-        return set_device_trust_cookie(resp, user.id)
+        # The trust cookie is deliberately not renewed here: the week runs from the
+        # last time the code was entered, not from the last sign-in.
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
 
     _send_login_otp(user)
     log_action(user.id, "login_password_verified", detail="awaiting MFA code")
@@ -203,13 +207,15 @@ def signup_page():
     if not form["first_name"] or not form["last_name"]:
         return reject("First and last name are required.")
     if form["role"] not in _SIGNUP_ROLES:
-        return reject("Choose a valid account type.")
+        return reject("Choose a valid role.")
     if not _USERNAME_RE.match(form["username"]):
         return reject("Username must be 3-30 characters (letters, numbers, dots, underscores, hyphens).")
     if not _EMAIL_RE.match(form["email"]):
         return reject("Enter a valid email address.")
-    if len(password) < 10 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
-        return reject("Password must be at least 10 characters and include a letter and a number.")
+    try:
+        validate_password(password)
+    except ValidationError as exc:
+        return reject(str(exc))
     if password != confirm_password:
         return reject("Passwords do not match.")
     if User.query.filter_by(username=form["username"]).first():
@@ -490,8 +496,10 @@ def reset_password_page():
     password = request.form.get("password", "")
     confirm_password = request.form.get("confirm_password", "")
 
-    if len(password) < 10 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
-        flash("Password must be at least 10 characters and include a letter and a number.", "error")
+    try:
+        validate_password(password)
+    except ValidationError as exc:
+        flash(str(exc), "error")
         return render_template("reset_password.html"), 400
     if password != confirm_password:
         flash("Passwords do not match.", "error")
@@ -521,14 +529,7 @@ def _my_target_ids():
 
 
 def _my_findings(target_ids):
-    if not target_ids:
-        return []
-    return (
-        Vulnerability.query.join(Asset)
-        .filter(Asset.target_id.in_(target_ids))
-        .order_by(Vulnerability.discovered_at.desc())
-        .all()
-    )
+    return findings_for_targets(target_ids)
 
 
 def _selected_target_id(my_target_ids):
@@ -555,25 +556,7 @@ def _workspace_context():
     # (assets/network/findings/scan history/charts) is scoped to whichever
     # single target is selected, so a freshly scanned site shows up in its
     # own clean view instead of blending into every other target's rows.
-    all_assets = [a for t in my_targets for a in t.assets]
-    nav_counts = {
-        "domains": len(my_targets),
-        "subdomains": sum(1 for a in all_assets if a.subdomain),
-        "ips": sum(1 for a in all_assets if a.ip_address),
-        "webapps": sum(1 for a in all_assets if a.url),
-        "ports": PortService.query.filter(PortService.asset_id.in_([a.id for a in all_assets])).count()
-        if all_assets
-        else 0,
-        "services": len(
-            {
-                p.service_name
-                for p in PortService.query.filter(PortService.asset_id.in_([a.id for a in all_assets])).all()
-                if p.service_name
-            }
-        )
-        if all_assets
-        else 0,
-    }
+    nav_counts = inventory_service.nav_counts(my_targets)
 
     selected_target_id = _selected_target_id(my_target_ids)
     scoped_target_ids = [selected_target_id] if selected_target_id else my_target_ids
@@ -585,13 +568,6 @@ def _workspace_context():
         else []
     )
     findings = _my_findings(scoped_target_ids)
-    my_assets = [a for t in scoped_targets for a in t.assets]
-    asset_map = {a.id: (a.subdomain or a.url or a.ip_address or f"asset-{a.id}") for a in my_assets}
-    my_ports = (
-        PortService.query.filter(PortService.asset_id.in_([a.id for a in my_assets])).all()
-        if my_assets
-        else []
-    )
     chart_range = normalize_range(request.args.get("range"))
     scan_totals = scan_status_totals(scoped_target_ids, chart_range)
     severity_counts = severity_totals(scoped_target_ids, chart_range)
@@ -613,8 +589,9 @@ def _workspace_context():
     }
 
     target_reports = list_reports_for_target(selected_target_id) if selected_target_id else []
+    exposed_dorks = exposed_dork_labels(selected_target_id) if selected_target_id else {}
     dork_categories = (
-        dork_categories_for_domain(target_map[selected_target_id]) if selected_target_id else []
+        dork_categories_for_domain(target_map[selected_target_id], exposed_dorks) if selected_target_id else []
     )
 
     return {
@@ -624,15 +601,13 @@ def _workspace_context():
         "scoped_stat_values": stat_values,
         "target_reports": target_reports,
         "dork_categories": dork_categories,
+        "exposed_dork_total": sum(exposed_dorks.values()),
         "dork_count": total_dork_count(),
         "recent_scans": scan_history,
         "summary": summary,
         "target_map": target_map,
         "target_risk": target_risk,
         "findings": findings,
-        "assets": my_assets,
-        "ports": my_ports,
-        "asset_map": asset_map,
         "nav_counts": nav_counts,
         "vulnerable_count": vulnerable_count,
         "needs_review_count": needs_review_count,
@@ -650,6 +625,8 @@ def dashboard_placeholder():
         return redirect(url_for("auth_pages.login_page"))
     if current_user.role == ROLE_IT_ADMIN:
         return redirect(url_for("auth_pages.admin_dashboard"))
+    if current_user.role == ROLE_THREAT_INTEL:
+        return redirect(url_for("threat_intel.threat_intel_page"))
 
     return render_template("workspace_overview.html", active_nav="overview", **_workspace_context())
 
@@ -659,8 +636,23 @@ def dashboard_placeholder():
 def workspace_dashboard():
     if current_user.role == ROLE_IT_ADMIN:
         return redirect(url_for("auth_pages.admin_dashboard"))
+    if current_user.role == ROLE_THREAT_INTEL:
+        return redirect(url_for("threat_intel.threat_intel_page"))
 
-    return render_template("dashboard_user.html", active_nav="dashboard", **_workspace_context())
+    context = _workspace_context()
+    radar = radar_service.radar_snapshot(current_user.id, context["selected_target_id"])
+    scoped_ids = [context["selected_target_id"]] if context["selected_target_id"] else [t.id for t in context["targets"]]
+    return render_template(
+        "dashboard_user.html",
+        active_nav="dashboard",
+        radar=radar,
+        events=monitor_service.recent_events(scoped_ids, 100),
+        monitor_choices=[(key, key.capitalize()) for key in MONITOR_INTERVALS],
+        monitor_choice=lambda target: next((k for k, d in MONITOR_INTERVALS.items() if d == target.monitor_interval_days), "off"),
+        monitor_next=monitor_service.next_run_at,
+        monitor_now=monitor_service.utcnow(),
+        **context,
+    )
 
 
 def _export_target_ids():
@@ -717,6 +709,31 @@ def export_findings_markdown():
     )
 
 
+@auth_pages_bp.route("/workspace/findings/<int:vuln_id>/status", methods=["POST"])
+@login_required
+def update_finding_status(vuln_id):
+    if current_user.role not in (ROLE_ANALYST, ROLE_IT_ADMIN):
+        flash("You do not have permission to change finding status.", "error")
+        return redirect(url_for("auth_pages.dashboard_placeholder"))
+
+    back = url_for("findings.findings_page", target_id=request.form.get("target_id", type=int))
+    vuln = Vulnerability.query.get(vuln_id)
+    target = vuln.asset.target if vuln else None
+    if not target or (target.owner_id != current_user.id and current_user.role != ROLE_IT_ADMIN):
+        flash("Finding not found.", "error")
+        return redirect(back)
+
+    status = request.form.get("status", "")
+    if status not in VULN_STATUSES:
+        flash("Invalid status.", "error")
+        return redirect(back)
+
+    vuln.status = status
+    db.session.commit()
+    log_action(current_user.id, "vulnerability_status_updated", detail=f"vuln_id={vuln_id} status={status}")
+    return redirect(back)
+
+
 @auth_pages_bp.route("/admin/dashboard")
 @login_required
 def admin_dashboard():
@@ -729,8 +746,8 @@ def admin_dashboard():
         "total": len(users),
         "it_admin": sum(1 for u in users if u.role == ROLE_IT_ADMIN),
         "analyst": sum(1 for u in users if u.role == ROLE_ANALYST),
-        "security_team": sum(1 for u in users if u.role == ROLE_SECURITY_TEAM),
         "threat_intel": sum(1 for u in users if u.role == ROLE_THREAT_INTEL),
+        "deactivated": sum(1 for u in users if not u.is_active_flag),
     }
 
     return render_template(
@@ -739,6 +756,7 @@ def admin_dashboard():
         users=users,
         role_counts=role_counts,
         roles=ROLES,
+        recent_activity=user_admin_service.recent_activity(10),
     )
 
 

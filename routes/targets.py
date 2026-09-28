@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from models import ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_SECURITY_TEAM
+from models import ROLE_ANALYST, ROLE_IT_ADMIN, ROLE_THREAT_INTEL
 from services import target_service
 from utils.audit import log_action
 from utils.decorators import role_required
@@ -9,7 +9,7 @@ from utils.validators import ValidationError
 
 targets_bp = Blueprint("targets", __name__, url_prefix="/api/targets")
 
-_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_SECURITY_TEAM)
+_ALL_ROLES = (ROLE_IT_ADMIN, ROLE_ANALYST, ROLE_THREAT_INTEL)
 
 
 @targets_bp.route("", methods=["GET"])

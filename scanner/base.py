@@ -125,6 +125,8 @@ class ScanControl:
         self._stop = threading.Event()
         self._paused = threading.Event()
         self._pid = None
+        self._paused_at = None
+        self._paused_total = 0.0
 
     def attach_process(self, pid: int):
         with self._lock:
@@ -148,17 +150,28 @@ class ScanControl:
     def request_pause(self):
         self._paused.set()
         with self._lock:
+            if self._paused_at is None:
+                self._paused_at = time.monotonic()
             if self._pid:
                 self._suspend_pid(self._pid)
 
     def request_resume(self):
         self._paused.clear()
         with self._lock:
+            if self._paused_at is not None:
+                self._paused_total += time.monotonic() - self._paused_at
+                self._paused_at = None
             if self._pid:
                 self._resume_pid(self._pid)
 
     def is_paused(self) -> bool:
         return self._paused.is_set()
+
+    def paused_seconds(self) -> float:
+        """Total time spent paused so far, including a pause that is still going on."""
+        with self._lock:
+            ongoing = time.monotonic() - self._paused_at if self._paused_at is not None else 0.0
+            return self._paused_total + ongoing
 
     def wait_if_paused(self):
         while self._paused.is_set() and not self._stop.is_set():

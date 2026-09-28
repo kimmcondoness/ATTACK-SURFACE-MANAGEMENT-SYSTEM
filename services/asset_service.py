@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from extensions import db
 from models import Asset, PortService
 
@@ -40,13 +42,25 @@ def get_or_create_self_asset(target):
     scanning has something to point at even when subdomain enumeration
     finds nothing (e.g. the submitted host is already a leaf subdomain).
     """
+    now = datetime.utcnow()
     existing = Asset.query.filter_by(target_id=target.id, subdomain=target.domain).first()
     if existing:
+        existing.last_seen_at = now
+        existing.status = "active"
+        db.session.commit()
         return existing
-    asset = Asset(target_id=target.id, subdomain=target.domain, url=f"https://{target.domain}")
+    asset = Asset(target_id=target.id, subdomain=target.domain, url=f"https://{target.domain}", last_seen_at=now, status="active")
     db.session.add(asset)
     db.session.commit()
     return asset
+
+
+def record_asset_ip(asset, ip_address):
+    """Store the IP a real port scan resolved the asset to (latest wins,
+    since DNS answers change)."""
+    if ip_address and asset.ip_address != ip_address:
+        asset.ip_address = ip_address
+        db.session.commit()
 
 
 def list_assets_for_target(target_id: int):

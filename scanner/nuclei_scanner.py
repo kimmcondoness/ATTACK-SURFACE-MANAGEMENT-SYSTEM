@@ -34,20 +34,7 @@ class NucleiScanner(BaseScanner):
         return findings
 
     def mock_result(self, target: str) -> ScannerResult:
-        data = [
-            {
-                "severity": "medium",
-                "cve": None,
-                "title": "Missing security headers",
-                "description": f"{target} does not set recommended security headers (CSP, X-Frame-Options).",
-                "recommendation": "Add Content-Security-Policy and X-Frame-Options headers.",
-            },
-            {
-                "severity": "low",
-                "cve": None,
-                "title": "Server version disclosure",
-                "description": f"{target} exposes server version information in HTTP response headers.",
-                "recommendation": "Suppress version banners in server configuration.",
-            },
-        ]
-        return ScannerResult(success=True, source="mock", data=data)
+        # Nuclei is not installed. The scan service checks is_available() first and skips
+        # Nuclei (the built-in configuration checks still run), so no made-up findings are
+        # ever produced; this only keeps the scanner interface complete.
+        return ScannerResult(success=True, source="mock", data=[])

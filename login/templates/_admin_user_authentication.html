@@ -1,0 +1,45 @@
+<div class="ud-section">
+  <h2>Actions</h2>
+  <div class="ud-actions">
+    <details class="ud-action">
+      <summary class="btn-mini">Reset password</summary>
+      <form method="POST" action="{{ url_for('admin_users.reset_password', user_id=subject.id) }}" class="ud-form" autocomplete="off" data-confirm="Reset the password for {{ subject.username }}? Their trusted devices will be signed out.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="ud-form-row">
+          <label>New password
+            <input type="password" name="password" autocomplete="new-password" required>
+          </label>
+          <label>Confirm new password
+            <input type="password" name="confirm_password" autocomplete="new-password" required>
+          </label>
+        </div>
+        <p class="ud-note">More than 8 characters, with an uppercase letter, a number and a special character.</p>
+        <button type="submit" class="btn-mini btn-mini-save">Set password</button>
+      </form>
+    </details>
+
+    {% if not is_self %}
+    <form method="POST" action="{{ url_for('admin_users.toggle_lock', user_id=subject.id) }}" data-confirm="{{ 'Lock' if subject.is_active_flag else 'Unlock' }} the account for {{ subject.username }}?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn-mini{{ ' btn-mini-danger' if subject.is_active_flag else '' }}">{{ 'Lock account' if subject.is_active_flag else 'Unlock account' }}</button>
+    </form>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('admin_users.revoke_devices', user_id=subject.id) }}" data-confirm="Reset MFA for {{ subject.username }}? Every trusted device will be asked for an email code again.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn-mini">Reset MFA</button>
+    </form>
+  </div>
+  {% if is_self %}<p class="ud-note">You cannot lock your own account.</p>{% endif %}
+</div>
+
+<div class="ud-section">
+  <h2>Authentication methods</h2>
+  <dl class="ud-grid">
+    <div><dt>Sign-in</dt><dd>Password and CAPTCHA</dd></div>
+    <div><dt>MFA status</dt><dd>{% if subject.role == 'it_admin' %}Not required (IT Administrator){% else %}Email one-time code required{% endif %}</dd></div>
+    <div><dt>Trusted devices</dt><dd>{% if devices_reset_at %}Last reset {{ devices_reset_at.strftime('%Y-%m-%d %H:%M') }}{% else %}Never reset{% endif %}</dd></div>
+    <div><dt>Account status</dt><dd>{% if subject.is_active_flag %}<span class="pill pill-active">Active</span>{% else %}<span class="pill pill-disabled">Locked</span>{% endif %}</dd></div>
+  </dl>
+  <p class="ud-note">A device the user has verified stays trusted for 30 days and skips the email code. Reset MFA, or reset the password, to make every device verify again. A locked account is signed out immediately and cannot sign in until unlocked.</p>
+</div>
