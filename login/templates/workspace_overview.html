@@ -17,7 +17,7 @@
           <h1>Welcome back, {{ user.first_name or user.username }}<span class="ws-hero-badge">Workspace</span></h1>
           <p>
             Continuous discovery and monitoring of your organization's authorized external attack
-            surface — domains, subdomains, IP addresses, web applications, open ports and exposed
+            surface: domains, subdomains, IP addresses, web applications, open ports and exposed
             services, all scoped to the targets assigned to you.
           </p>
         </div>
@@ -64,7 +64,7 @@
             <h2>Google Dorking <span class="tag-featured">OSINT</span></h2>
             <span class="count">{{ dork_count }}</span>
           </div>
-          <p>Curated dork queries for exposed files, admin panels, secrets and more &mdash; most EASM tools skip this.</p>
+          <p>Curated dork queries for exposed files, admin panels, secrets and more.</p>
         </a>
 
         <a class="ws-category-card" href="{{ url_for('inventory.inventory_page', slug='open-ports') }}">
@@ -86,7 +86,7 @@
         </a>
       </div>
 
-      <p class="ws-hint">Pick a section from the sidebar — or click a category above — to see the full dashboard.</p>
+      <p class="ws-hint">Pick a section from the sidebar, or click a category above, to see the full dashboard.</p>
     </main>
   </div>
 

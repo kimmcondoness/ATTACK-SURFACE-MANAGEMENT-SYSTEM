@@ -68,7 +68,7 @@
 
       <section class="ws-panel">
         <div class="ws-panel-head">
-          <h2>Report history{% if selected_domain %} &mdash; {{ selected_domain }}{% endif %}</h2>
+          <h2>Report history{% if selected_domain %}: {{ selected_domain }}{% endif %}</h2>
           <span>{{ reports|length }} total</span>
         </div>
         {% if reports %}
@@ -99,7 +99,7 @@
       </section>
       <section class="ws-panel">
         <div class="ws-panel-head">
-          <h2>Findings{% if selected_domain %} &mdash; {{ selected_domain }}{% endif %}</h2>
+          <h2>Findings{% if selected_domain %}: {{ selected_domain }}{% endif %}</h2>
           <span>{{ findings|length }} total</span>
         </div>
 
@@ -133,7 +133,7 @@
                 <td><input type="checkbox" name="vuln_ids" value="{{ f.id }}" form="bulk-delete-form" class="row-select" data-has-cve="{{ 'yes' if f.cve else 'no' }}" aria-label="Select {{ f.title }}"></td>
                 <td class="text-mono">
                   {% if f.cve %}<a href="https://nvd.nist.gov/vuln/detail/{{ f.cve }}" target="_blank" rel="noopener">{{ f.cve }}</a>
-                  {% else %}&mdash;{% endif %}
+                  {% else %}-{% endif %}
                 </td>
                 <td><span class="pill pill-{{ f.severity }}">{{ f.severity }}</span></td>
                 <td class="text-mono">{{ '%.1f'|format(priority(f)) }}</td>

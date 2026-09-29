@@ -21,3 +21,11 @@ iis-installers/
 
 # Anything a local IIS/NSSM service run might drop here.
 *.log
+
+# Local AI-assistant tooling and audit output, not for the public repo
+.agents/
+.claude/
+AGENTS.md
+CLAUDE.md
+Skills-lock.json
+audit-*.md

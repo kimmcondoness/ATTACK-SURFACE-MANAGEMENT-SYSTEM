@@ -174,7 +174,7 @@
       } %}
       <section id="changes" class="ws-panel">
         <div class="ws-panel-head">
-          <h2>Changes detected{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <h2>Changes detected{% if selected_target_id %}: {{ target_map.get(selected_target_id) }}{% endif %}</h2>
           <span>{{ events|length }} recorded</span>
         </div>
         {% if events %}
@@ -190,7 +190,7 @@
               <td class="text-mono">{{ target_map.get(e.target_id, '-') }}</td>
               <td><span class="change-badge {{ css }}">{{ label }}</span></td>
               <td>{{ e.subject }}{% if e.detail %}<br><span class="change-detail">{{ e.detail }}</span>{% endif %}</td>
-              <td>{% if e.severity %}<span class="pill pill-{{ e.severity }}">{{ e.severity }}</span>{% else %}&mdash;{% endif %}</td>
+              <td>{% if e.severity %}<span class="pill pill-{{ e.severity }}">{{ e.severity }}</span>{% else %}-{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -247,7 +247,7 @@
 
       <section id="dorking" class="ws-panel">
         <div class="ws-panel-head">
-          <h2>Google Dorking (OSINT){% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <h2>Google Dorking (OSINT){% if selected_target_id %}: {{ target_map.get(selected_target_id) }}{% endif %}</h2>
           <span>{{ dork_count }} queries{% if selected_target_id %} &middot; {{ exposed_dork_total }} exposed{% endif %}</span>
         </div>
         {% if not selected_target_id %}
@@ -256,7 +256,7 @@
         <p class="ws-report-summary">
           Each scan also checks these exposures directly on the host and records what it confirms as a finding
           (marked <b>Exposed</b> below, with mitigation and a risk score in Findings &amp; CVE Report). The links open a
-          real Google search in a new tab to see what is indexed &mdash; there is no automated scraping, which would
+          real Google search in a new tab to see what is indexed. There is no automated scraping, which would
           violate Google's Terms of Service. Only run these against domains you're authorized to assess.
         </p>
         {% for group in dork_categories %}
@@ -279,7 +279,7 @@
 
       <section id="activity" class="ws-panel">
         <div class="ws-panel-head">
-          <h2>Scan history{% if selected_target_id %} &mdash; {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <h2>Scan history{% if selected_target_id %}: {{ target_map.get(selected_target_id) }}{% endif %}</h2>
           <span>{{ recent_scans|length }} shown</span>
         </div>
         {% if recent_scans %}

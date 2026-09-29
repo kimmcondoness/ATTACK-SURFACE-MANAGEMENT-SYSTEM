@@ -13,7 +13,7 @@
       {%- for cve in ids -%}
         <a href="https://nvd.nist.gov/vuln/detail/{{ cve }}" target="_blank" rel="noopener noreferrer" title="Open {{ cve }} in the NIST National Vulnerability Database">{{ cve }}</a>{% if not loop.last %}<br>{% endif %}
       {%- endfor -%}
-    {%- else -%}&mdash;{%- endif -%}
+    {%- else -%}-{%- endif -%}
   {%- endmacro %}
   <div class="ws-shell">
     {% include "_workspace_sidebar.html" %}
@@ -24,7 +24,7 @@
         <h1>Real-world exploitation risk</h1>
         <p>
           Every open/in-progress finding across all authorized targets, prioritized by real CVSS score,
-          CISA KEV (confirmed actively exploited) status, and public exploit availability &mdash; not just a
+          CISA KEV (confirmed actively exploited) status, and public exploit availability, not just a
           severity label. See <a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">CISA KEV</a>
           and <a href="https://cve.circl.lu/" target="_blank" rel="noopener">cve.circl.lu</a> for the underlying sources.
         </p>
@@ -127,7 +127,7 @@
                 {% if epss %}
                 <span class="epss-badge epss-{{ epss_level(epss.epss) }}" title="EPSS {{ '%.2f'|format(epss.epss * 100) }}%: estimated chance of exploitation in the next 30 days. Higher than {{ '%.0f'|format(epss.percentile * 100) }}% of all scored CVEs.">{{ '%.1f'|format(epss.epss * 100) }}%</span>
                 {% else %}
-                <span class="epss-none" title="{{ 'No EPSS score is published for this CVE, or FIRST.org could not be reached.' if v.cve else 'No CVE, so no EPSS score.' }}">&mdash;</span>
+                <span class="epss-none" title="{{ 'No EPSS score is published for this CVE, or FIRST.org could not be reached.' if v.cve else 'No CVE, so no EPSS score.' }}">-</span>
                 {% endif %}
               </td>
               <td class="text-mono">{{ domain }}</td>
@@ -153,7 +153,7 @@
 
       <section class="ws-panel" style="margin-bottom: 0;">
         <div class="ws-panel-head">
-          <h2>CISA KEV catalog &mdash; recent additions</h2>
+          <h2>CISA KEV catalog: recent additions</h2>
           <span>General awareness, not limited to monitored assets</span>
         </div>
         {% if kev_feed %}
@@ -165,7 +165,7 @@
             {% for entry in kev_feed %}
             <tr>
               <td class="text-mono"><a href="https://nvd.nist.gov/vuln/detail/{{ entry.cveID }}" target="_blank" rel="noopener">{{ entry.cveID }}</a></td>
-              <td>{{ entry.vendorProject }} &mdash; {{ entry.product }}</td>
+              <td>{{ entry.vendorProject }}: {{ entry.product }}</td>
               <td class="text-mono">{{ entry.dateAdded }}</td>
               <td class="text-mono">{{ entry.dueDate or '-' }}</td>
             </tr>
