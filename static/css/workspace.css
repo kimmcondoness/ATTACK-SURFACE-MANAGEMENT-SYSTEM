@@ -1464,9 +1464,25 @@ tbody tr:hover {
 
 .ud-email {
   margin: 0.15rem 0 0;
-  color: var(--panel-muted);
+  /* --panel-muted is a light grey-green meant for the dark panel cards; this
+     header sits directly on the page's light background, so it needs the
+     light-background muted color instead, or it is nearly unreadable. */
+  color: var(--muted);
   font-size: 0.9rem;
   overflow-wrap: anywhere;
+}
+
+.ud-back {
+  /* .btn-ghost's colors are for a dark panel background; this button sits on
+     the page's light background instead, so it needs its own light-mode
+     colors rather than near-white text and a dark border. */
+  color: var(--text);
+  border-color: var(--paper-line);
+}
+
+.ud-back:hover {
+  color: var(--accent-dark);
+  border-color: var(--accent);
 }
 
 .ud-layout {
@@ -1521,6 +1537,11 @@ tbody tr:hover {
   background: var(--panel-bg);
   padding: 0.5rem 1.5rem 1rem;
   min-width: 0;
+  /* Same baseline .ws-panel sets: without it, plain text (dd values, headings)
+     inherits the page's dark body text and is nearly invisible on this dark
+     card. Only text with its own color (the .text-mono fields, pills, links)
+     was readable before this. */
+  color: var(--panel-text);
 }
 
 .ud-section {
