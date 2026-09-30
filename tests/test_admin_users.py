@@ -1,3 +1,4 @@
+import re
 import time
 
 import pytest
@@ -267,3 +268,16 @@ def test_admin_dashboard_links_to_the_directory_and_shows_new_summaries(admin_cl
     assert f"/admin/users/{analyst_user.id}" in html and ">Manage<" in html
     assert "Deactivated" in html and "Recent activity" in html
     assert 'id="table-search"' in html and "data-filterable" in html
+
+
+def test_a_user_with_no_first_or_last_name_shows_their_username_not_none_none(admin_client, admin_user):
+    # database/seed.py's default admin, and any account created via the /api/users API, never
+    # set first_name/last_name -- Jinja renders a bare None as the literal text "None".
+    nameless = _user("nameless", first_name=None, last_name=None)
+
+    html = admin_client.get("/admin/dashboard").get_data(as_text=True)
+
+    cell = re.search(r'<td><a href="[^"]+">([^<]*)</a><br><span class="text-mono">nameless</span></td>', html)
+    assert cell is not None
+    assert "None" not in cell.group(1)
+    assert cell.group(1) == "nameless"  # falls back to the username

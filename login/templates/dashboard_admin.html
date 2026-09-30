@@ -50,7 +50,7 @@
           <tbody>
             {% for u in users %}
             <tr data-search="{{ u.first_name or '' }} {{ u.last_name or '' }} {{ u.username }} {{ u.email }} {{ u.role.replace('_', ' ') }} {{ 'active' if u.is_active_flag else 'deactivated' }}">
-              <td><a href="{{ url_for('admin_users.user_home', user_id=u.id) }}">{{ u.first_name }} {{ u.last_name }}</a><br><span class="text-mono">{{ u.username }}</span></td>
+              <td><a href="{{ url_for('admin_users.user_home', user_id=u.id) }}">{{ display_name(u) }}</a><br><span class="text-mono">{{ u.username }}</span></td>
               <td>{{ u.email }}</td>
               <td>
                 {% if u.role == 'it_admin' %}<span class="pill pill-admin">Admin</span>

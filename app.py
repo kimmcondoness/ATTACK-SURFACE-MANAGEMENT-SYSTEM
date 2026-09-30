@@ -1,4 +1,7 @@
+import os
+
 from flask import Flask, jsonify, redirect, request, url_for
+from sqlalchemy.engine import make_url
 
 from config import BASE_DIR, get_config
 from extensions import bcrypt, csrf, db, limiter, login_manager
@@ -14,6 +17,22 @@ def create_app(config_object=None):
     app.config.from_object(config_object or get_config())
 
     db.init_app(app)
+
+    # Two machines running this app (e.g. a Windows dev box and a Linux server) each talk
+    # to their OWN local MySQL by default -- nothing here replicates or syncs data between
+    # them (see DEPLOYMENT.md). Different users/roles or a missing account on one machine
+    # almost always means its DATABASE_URL points at a different, independently seeded
+    # database. This line makes that visible in the startup log instead of only showing up
+    # as "I can log in here but not there".
+    db_url = make_url(app.config["SQLALCHEMY_DATABASE_URI"])
+    app.logger.info("Database: %s", db_url.render_as_string(hide_password=True))
+    if not os.environ.get("DATABASE_URL"):
+        app.logger.warning(
+            "DATABASE_URL is not set in the environment, so this process fell back to the "
+            "built-in default above. If this machine is meant to share data with another one, "
+            "set DATABASE_URL in its .env to the exact same value as the other machine's."
+        )
+
     if app.config.get("AUTO_UPGRADE_SCHEMA"):
         from database.upgrade import upgrade_schema
 

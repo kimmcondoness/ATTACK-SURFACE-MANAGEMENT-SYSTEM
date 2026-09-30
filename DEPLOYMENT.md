@@ -24,6 +24,34 @@ started that scan and silently do nothing.
   requirement. If you later need multiple processes/machines, move both the
   job registry design and the rate limiter to a shared backend (Redis) first.
 
+## Important: each machine has its own database unless you point it elsewhere
+
+There is no sync or replication between installs. `DATABASE_URL` in `.env` defaults to
+a MySQL server on `localhost`, so a Windows dev machine and a Linux server each connect
+to their **own local MySQL**, seeded independently (`database/mysql_schema.sql` +
+`database/seed.py`). Users, roles and data created on one are simply not present on the
+other -- that is not a bug, it is two separate databases that were never told to share
+one.
+
+If you see different users/roles on different machines (e.g. an IT Administrator
+account that exists on one machine but not another), check, on the machine that is
+wrong:
+
+- Does `.env` exist there at all, and does it have `DATABASE_URL` set? `.env` is not
+  committed to git, so it must be created separately on every machine. With no
+  `DATABASE_URL`, the app silently falls back to a local SQLite file with no users in
+  it -- the server logs the database in use on every start-up (`Database: ...`) so you
+  can see at a glance which one a process actually connected to.
+- Does `DATABASE_URL` there point at the MySQL server you expect (same host and
+  database name as the other machine), or at that machine's own `localhost`?
+- If you want both machines to share one set of users, point **both** `.env` files at
+  the **same** MySQL host (and make sure that server accepts remote connections and the
+  MySQL user has the right grants) -- that is the only way to "sync" them; there is no
+  other mechanism.
+- If you instead want two independent databases to have the same users just once
+  (not kept in sync going forward), migrate the data with `mysqldump` from one and
+  import it into the other.
+
 ## Continuous monitoring (the scheduler)
 
 Monitored targets are re-scanned by a background thread inside the same single process

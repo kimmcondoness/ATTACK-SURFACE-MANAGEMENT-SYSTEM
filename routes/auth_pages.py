@@ -757,6 +757,7 @@ def admin_dashboard():
         role_counts=role_counts,
         roles=ROLES,
         recent_activity=user_admin_service.recent_activity(10),
+        display_name=user_admin_service.display_name,
     )
 
 
