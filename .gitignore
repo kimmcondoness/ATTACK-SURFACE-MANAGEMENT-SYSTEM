@@ -3,7 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
-users_exports.sql
+*.sql
 .env.example
 instance/
 *.db
