@@ -34,7 +34,9 @@
           {% else %}Enter verification code{% endif %}
         </h2>
         <p class="lede">
-          {% if pending_email %}
+          {% if session.get('otp_email_failed') %}
+            We could not email a code{% if pending_email %} to <strong>{{ pending_email }}</strong>{% endif %}.
+          {% elif pending_email %}
             We emailed a 6-digit code to <strong>{{ pending_email }}</strong>.
           {% else %}
             We emailed a 6-digit code to your inbox.

@@ -62,10 +62,24 @@ above and nothing else: no cron job, no extra service.
   first request). Targets are claimed with one atomic database update, so even an
   accidental second process cannot scan the same target twice.
 - Existing databases are upgraded in place at start-up (`AUTO_UPGRADE_SCHEMA`): new columns
-  and the `monitor_events` table are added, nothing is removed. Back up the database first
-  as you would before any release.
+  (`users.last_seen_at`, ...) and the `monitor_events`, `monitor_runs`, `monitor_heartbeat` and
+  `report_shares` tables are added, nothing is removed. Back up the database first as you
+  would before any release.
+- It does not depend on anyone being signed in. To check it is alive without signing in, poll
+  `GET /api/health/monitoring`: 200 while the scheduler is reporting in, 503 when its heartbeat has
+  gone quiet (a good target for an uptime monitor). The Dashboard's *Continuous monitoring* panel
+  shows the same status plus a log of every scan the scheduler ran.
+- When the process starts it closes any scan the previous process left unfinished (marked
+  *Interrupted*) and re-queues a scheduled one for the next check. This assumes one process owns the
+  scans; do not start a second app process against the same database while the first is scanning.
 - To send alert emails set `MAIL_SERVER`, `MAIL_USERNAME`, `MAIL_PASSWORD` (see `.env`);
-  without them alerts are only written to the application log.
+  without them alerts are only written to the application log. The same settings send the
+  sign-in / sign-up / password-reset verification codes.
+- For Gmail, `MAIL_PASSWORD` must be a 16-character **App Password** (Google Account > Security >
+  2-Step Verification > App passwords), not the account password. If it is wrong or revoked, Gmail
+  answers `535 BadCredentials` and no code email is sent; the sign-in page then says the email could
+  not be sent. Run `python -m utils.mail_check` (add an address to also send a test message) to check
+  the settings after changing them, then restart the app.
 - Optional, to add template-based scanning: install Nuclei (see below). The built-in
   configuration checks run either way.
 - To remove the sample findings that older versions stored when Nuclei was missing:

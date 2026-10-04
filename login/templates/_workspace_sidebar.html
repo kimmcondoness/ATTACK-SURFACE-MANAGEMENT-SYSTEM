@@ -10,6 +10,7 @@
   <nav class="ws-nav">
     {% if user.role == 'threat_intel_analyst' %}
     <a href="{{ url_for('threat_intel.threat_intel_page') }}" class="{{ 'active' if active_nav == 'threat_intel' else '' }}">Threat Intelligence</a>
+    <a href="{{ url_for('threat_intel.threat_intel_page') }}#shared-reports">Shared Reports</a>
     <a href="{{ url_for('threat_intel.briefing_csv') }}">Threat Briefing (CSV)</a>
     {% else %}
       <a href="{{ url_for('auth_pages.dashboard_placeholder') }}" class="{{ 'active' if active_nav == 'overview' else '' }}">Overview</a>

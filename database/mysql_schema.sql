@@ -9,6 +9,9 @@ USE asm_system;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS report_shares;
+DROP TABLE IF EXISTS monitor_heartbeat;
+DROP TABLE IF EXISTS monitor_runs;
 DROP TABLE IF EXISTS monitor_events;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS reports;
@@ -33,6 +36,7 @@ CREATE TABLE users (
   role            VARCHAR(30)  NOT NULL DEFAULT 'cybersecurity_analyst',
   is_active_flag  TINYINT(1)   NOT NULL DEFAULT 1,
   created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at    DATETIME     NULL,   -- last request; lets a sign-in say what monitoring did meanwhile
   UNIQUE KEY uq_users_username (username),
   UNIQUE KEY uq_users_email (email),
   CONSTRAINT chk_users_role CHECK (role IN ('it_admin', 'cybersecurity_analyst', 'threat_intel_analyst'))
@@ -183,4 +187,48 @@ CREATE TABLE monitor_events (
   KEY ix_monitor_events_target_id (target_id),
   KEY ix_monitor_events_created_at (created_at),
   CONSTRAINT fk_events_target FOREIGN KEY (target_id) REFERENCES authorized_targets (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- monitor_runs: every scan chain that counts as monitoring (scheduled, or run by hand on a monitored
+-- target). Written by the scheduler, so it records monitoring happening whether or not anyone is signed in.
+-- No foreign keys on purpose: see the note in models.py (signed vs unsigned ids).
+
+CREATE TABLE monitor_runs (
+  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  target_id     INT UNSIGNED NOT NULL,
+  lead_scan_id  INT UNSIGNED NULL,
+  `trigger`     VARCHAR(10)  NOT NULL DEFAULT 'scheduled',   -- scheduled, manual
+  status        VARCHAR(20)  NOT NULL DEFAULT 'running',     -- running, completed, failed, stopped, interrupted
+  started_at    DATETIME     NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at   DATETIME     NULL,
+  changes       INT          NOT NULL DEFAULT 0,
+  alert_sent    TINYINT(1)   NOT NULL DEFAULT 0,
+  summary       TEXT         NULL,
+  KEY ix_monitor_runs_target_id (target_id),
+  KEY ix_monitor_runs_lead_scan_id (lead_scan_id),
+  KEY ix_monitor_runs_started_at (started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- monitor_heartbeat: the scheduler's pulse (a single row, id 1, rewritten on every check)
+
+CREATE TABLE monitor_heartbeat (
+  id            INT PRIMARY KEY,
+  started_at    DATETIME     NULL,
+  last_tick_at  DATETIME     NULL,
+  pid           INT          NULL,
+  last_error    VARCHAR(255) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- report_shares: reports an analyst has shared with Threat Intelligence (each report at most once)
+
+CREATE TABLE report_shares (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  report_id   INT UNSIGNED NOT NULL,
+  shared_by   INT UNSIGNED NOT NULL,
+  note        VARCHAR(500) NULL,
+  shared_at   DATETIME     NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_report_shares_report_id (report_id),
+  KEY ix_report_shares_shared_at (shared_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

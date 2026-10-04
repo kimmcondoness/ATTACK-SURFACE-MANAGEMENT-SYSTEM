@@ -20,12 +20,14 @@
       var levelHit = !level || row.dataset.severity === level;
       var hit = textHit && levelHit;
       row.hidden = !hit;
+      row.dataset.filtered = hit ? 'show' : 'hide';   // for table-pager.js, which pages only the rows that match
       if (hit) {
         shown += 1;
       }
     });
     noMatch.hidden = shown !== 0;
     count.textContent = query || level ? shown + ' of ' + rows.length : '';
+    table.dispatchEvent(new CustomEvent('table-filter'));
   }
 
   input.addEventListener('input', apply);

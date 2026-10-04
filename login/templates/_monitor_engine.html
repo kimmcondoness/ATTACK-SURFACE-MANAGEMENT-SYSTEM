@@ -1,0 +1,17 @@
+{# Is continuous monitoring alive? Read from the scheduler's heartbeat (monitor_service.engine_status),
+   so it is true whether or not anyone is signed in. static/js/monitor-status.js keeps it live. #}
+{% macro ago(seconds) -%}
+  {%- if seconds is none -%}never
+  {%- elif seconds < 60 -%}{{ seconds }}s ago
+  {%- elif seconds < 3600 -%}{{ seconds // 60 }}m ago
+  {%- else -%}{{ seconds // 3600 }}h ago{%- endif -%}
+{%- endmacro %}
+<div class="monitor-engine monitor-engine-{{ monitor_engine.state }}" id="monitor-engine" role="status"
+     data-endpoint="{{ url_for('monitoring.status') }}"
+     data-age="{{ monitor_engine.age_seconds if monitor_engine.age_seconds is not none else '' }}">
+  <span class="monitor-dot" aria-hidden="true"></span>
+  <span id="monitor-engine-text">{{ monitor_engine.label }} &middot; last check {{ ago(monitor_engine.age_seconds) }}{% if monitor_engine.started_at %} &middot; running since {{ monitor_engine.started_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</span>
+</div>
+{% if monitor_engine.last_error %}
+<p class="monitor-error">The last check hit an error: {{ monitor_engine.last_error }}</p>
+{% endif %}

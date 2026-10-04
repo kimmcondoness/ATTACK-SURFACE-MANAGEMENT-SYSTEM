@@ -13,12 +13,17 @@ from database.upgrade import COLUMN_UPGRADES, upgrade_schema
 from extensions import db
 
 OLD_SCHEMA = """
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY, username VARCHAR(80) NOT NULL, email VARCHAR(120) NOT NULL, first_name VARCHAR(80),
+    last_name VARCHAR(80), password_hash VARCHAR(128) NOT NULL, role VARCHAR(30) NOT NULL,
+    is_active_flag BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME);
 CREATE TABLE authorized_targets (
     id INTEGER PRIMARY KEY, domain VARCHAR(255) NOT NULL, description VARCHAR(255),
     authorized BOOLEAN NOT NULL DEFAULT 0, owner_id INTEGER NOT NULL, created_at DATETIME);
 CREATE TABLE assets (
     id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, subdomain VARCHAR(255), ip_address VARCHAR(45),
     url VARCHAR(500), technologies VARCHAR(500), discovery_date DATETIME);
+INSERT INTO users (id, username, email, password_hash, role) VALUES (1, 'analyst', 'a@example.com', 'x', 'cybersecurity_analyst');
 INSERT INTO authorized_targets (id, domain, authorized, owner_id) VALUES (1, 'example.com', 1, 1);
 INSERT INTO assets (id, target_id, subdomain, url) VALUES (1, 1, 'www.example.com', 'https://www.example.com');
 """
@@ -50,8 +55,11 @@ def test_an_old_database_gets_the_new_columns_and_table_without_losing_rows(old_
     with app.app_context():
         assert {"monitor_interval_days", "monitor_last_run_at"} <= _columns("authorized_targets")
         assert {"last_seen_at", "status", "missed_runs"} <= _columns("assets")
-        assert "monitor_events" in inspect(db.engine).get_table_names()
+        assert {"monitor_events", "monitor_runs", "monitor_heartbeat", "report_shares"} <= set(inspect(db.engine).get_table_names())
+        assert "last_seen_at" in _columns("users")
 
+        user = db.session.execute(db.text("SELECT username, last_seen_at FROM users")).one()
+        assert tuple(user) == ("analyst", None)                        # existing users are kept, nobody is "seen" yet
         row = db.session.execute(db.text("SELECT domain, monitor_interval_days FROM authorized_targets")).one()
         assert tuple(row) == ("example.com", None)                     # monitoring starts off for existing targets
         asset = db.session.execute(db.text("SELECT subdomain, status, missed_runs FROM assets")).one()
@@ -76,7 +84,7 @@ def test_it_reports_what_it_changed(old_database):
     app = create_app(Manual)
     with app.app_context():
         applied = upgrade_schema(db)
-        assert "created table monitor_events" in applied
+        assert {"created table monitor_events", "created table monitor_runs", "created table report_shares"} <= set(applied)
         assert {f"added {t}.{c}" for t, c, _ in COLUMN_UPGRADES} <= set(applied)
 
 

@@ -15,6 +15,7 @@ COLUMN_UPGRADES = (
     ("assets", "last_seen_at", "DATETIME NULL"),
     ("assets", "status", "VARCHAR(20) NOT NULL DEFAULT 'active'"),
     ("assets", "missed_runs", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "last_seen_at", "DATETIME NULL"),
 )
 
 
@@ -27,7 +28,7 @@ def upgrade_schema(db) -> list:
 
     applied = []
     before = set(inspect(db.engine).get_table_names())
-    db.create_all()   # creates tables that do not exist yet (e.g. monitor_events)
+    db.create_all()   # creates tables that do not exist yet (e.g. monitor_events, monitor_runs, report_shares)
     applied += [f"created table {name}" for name in sorted(set(inspect(db.engine).get_table_names()) - before)]
 
     inspector = inspect(db.engine)

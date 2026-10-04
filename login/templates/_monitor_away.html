@@ -1,0 +1,12 @@
+{# What continuous monitoring did while this user was signed out (see monitor_service.away_summary). #}
+{% if monitor_away %}
+<div class="monitor-away" role="status">
+  <strong>Monitoring kept running while you were away.</strong>
+  Since you were last here ({{ monitor_away.since.strftime('%Y-%m-%d %H:%M') }} UTC),
+  {{ monitor_away.runs }} scheduled scan{{ '' if monitor_away.runs == 1 else 's' }}
+  ran{% if monitor_away.failed %} ({{ monitor_away.failed }} did not finish){% endif %}
+  and {{ monitor_away.changes }} change{{ '' if monitor_away.changes == 1 else 's' }}
+  {{ 'was' if monitor_away.changes == 1 else 'were' }} detected.
+  <a href="{{ url_for('auth_pages.workspace_dashboard') }}#changes">See what changed</a>
+</div>
+{% endif %}

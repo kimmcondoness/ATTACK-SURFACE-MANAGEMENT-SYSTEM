@@ -72,10 +72,13 @@
           <span>{{ reports|length }} total</span>
         </div>
         {% if reports %}
+        <p class="ws-report-summary">Share a report with Threat Intelligence and they download the same file you exported. You can withdraw it at any time, and see here whether they have downloaded it.</p>
+        {% endif %}
+        {% if reports %}
         <div class="table-scroll">
           <table>
             <thead>
-              <tr><th>Target</th><th>Format</th><th>Generated</th><th>Status</th><th></th></tr>
+              <tr><th>Target</th><th>Format</th><th>Generated</th><th>Status</th><th>Threat Intelligence</th><th></th></tr>
             </thead>
             <tbody>
               {% for r in reports %}
@@ -86,6 +89,29 @@
                 <td>
                   {% if r.id in read_report_ids %}<span class="pill pill-active">Read</span>
                   {% else %}<span class="pill pill-inactive">Unread</span>{% endif %}
+                </td>
+                <td>
+                  {% set share = shares.get(r.id) %}
+                  {% if share %}
+                  <div class="share-state">
+                    <span class="pill pill-active">Shared</span>
+                    <span class="pill {{ 'pill-active' if share.id in shares_opened_ids else 'pill-inactive' }}">{{ 'Downloaded' if share.id in shares_opened_ids else 'Not downloaded yet' }}</span>
+                    <span class="change-detail">{{ share.shared_at.strftime('%Y-%m-%d %H:%M') if share.shared_at else '' }} UTC</span>
+                    {% if share.note %}<span class="change-detail">Note: {{ share.note }}</span>{% endif %}
+                  </div>
+                  <form method="POST" action="{{ url_for('workspace_reports.unshare_report', report_id=r.id) }}" class="row-actions">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="target_id" value="{{ selected_target_id or '' }}">
+                    <button type="submit" class="btn-mini btn-mini-danger">Withdraw</button>
+                  </form>
+                  {% else %}
+                  <form method="POST" action="{{ url_for('workspace_reports.share_report', report_id=r.id) }}" class="row-actions share-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="target_id" value="{{ selected_target_id or '' }}">
+                    <input type="text" name="note" class="share-note" maxlength="500" placeholder="Optional note" aria-label="Optional note for Threat Intelligence about the {{ target_map.get(r.target_id, '') }} report">
+                    <button type="submit" class="btn-mini btn-mini-save">Share</button>
+                  </form>
+                  {% endif %}
                 </td>
                 <td class="text-mono"><a href="{{ url_for('workspace_reports.download_report', report_id=r.id) }}">Download</a></td>
               </tr>

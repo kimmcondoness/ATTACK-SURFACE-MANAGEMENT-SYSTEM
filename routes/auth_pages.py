@@ -2,8 +2,9 @@ import csv
 import io
 import re
 import time
+from datetime import datetime
 
-from flask import Blueprint, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, Response, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
 from extensions import bcrypt, db, limiter
@@ -75,6 +76,20 @@ def _clear(*keys):
         session.pop(key, None)
 
 
+def _email_code(to_email, code, purpose="login"):
+    """Email a one-time code and return whether it went out. When it did not, say so on the page the
+    user is sent to, instead of leaving them waiting for an email that is not coming (the reason is
+    in the server log: see utils/mailer.py)."""
+    sent = send_otp_email(to_email, code, purpose=purpose)
+    session["otp_email_failed"] = not sent   # the verify page words itself by this, so it never claims an email it did not send
+    if not sent:
+        message = "We could not send the verification email right now. Try Resend code in a minute, or contact an administrator."
+        if current_app.debug:
+            message += " (Development mode: the code was written to the server console.)"
+        flash(message, "error")
+    return sent
+
+
 def _send_login_otp(user):
     code, code_hash, expires_at = generate_otp()
     session["pending_user_id"] = user.id
@@ -82,7 +97,7 @@ def _send_login_otp(user):
     session["otp_expires_at"] = expires_at
     session["otp_attempts"] = 0
     session["otp_last_sent_at"] = time.time()
-    send_otp_email(user.email, code)
+    return _email_code(user.email, code)
 
 
 def _send_signup_otp(email):
@@ -91,7 +106,7 @@ def _send_signup_otp(email):
     session["signup_otp_expires_at"] = expires_at
     session["signup_otp_attempts"] = 0
     session["signup_otp_last_sent_at"] = time.time()
-    send_otp_email(email, code)
+    return _email_code(email, code)
 
 
 def _send_reset_otp(user):
@@ -102,7 +117,7 @@ def _send_reset_otp(user):
     session["reset_otp_expires_at"] = expires_at
     session["reset_otp_attempts"] = 0
     session["reset_otp_last_sent_at"] = time.time()
-    send_otp_email(user.email, code, purpose="password reset")
+    return _email_code(user.email, code, purpose="password reset")
 
 
 def _resend_available_at(session_key):
@@ -307,9 +322,10 @@ def resend_signup_otp():
         flash(f"Please wait {int(remaining) + 1}s before requesting another code.", "error")
         return redirect(url_for("auth_pages.signup_verify_page"))
 
-    _send_signup_otp(pending["email"])
+    sent = _send_signup_otp(pending["email"])
     log_action(None, "signup_code_resent", detail=f"username={pending['username']}")
-    flash("A new verification code has been sent.", "success")
+    if sent:
+        flash("A new verification code has been sent.", "success")
     return redirect(url_for("auth_pages.signup_verify_page"))
 
 
@@ -386,9 +402,10 @@ def resend_login_otp():
         flash("Please log in first.", "error")
         return redirect(url_for("auth_pages.login_page"))
 
-    _send_login_otp(user)
+    sent = _send_login_otp(user)
     log_action(user.id, "mfa_code_resent")
-    flash("A new verification code has been sent.", "success")
+    if sent:
+        flash("A new verification code has been sent.", "success")
     return redirect(url_for("auth_pages.verify_otp_page"))
 
 
@@ -476,9 +493,10 @@ def resend_reset_otp():
         flash("Please request a password reset code first.", "error")
         return redirect(url_for("auth_pages.forgot_password_page"))
 
-    _send_reset_otp(user)
+    sent = _send_reset_otp(user)
     log_action(user.id, "password_reset_code_resent")
-    flash("A new verification code has been sent.", "success")
+    if sent:
+        flash("A new verification code has been sent.", "success")
     return redirect(url_for("auth_pages.forgot_password_verify_page"))
 
 
@@ -535,6 +553,27 @@ def _my_findings(target_ids):
 def _selected_target_id(my_target_ids):
     raw = request.args.get("target_id", type=int)
     return raw if raw in my_target_ids else None
+
+
+def _monitoring_context(my_targets, scoped_target_ids):
+    """Everything the monitoring panels show: whether the engine is alive, what it has done, what it
+    did while this user was signed out, and when it next runs."""
+    now = monitor_service.utcnow()
+    try:
+        away_since = datetime.fromisoformat(session["monitor_away_since"]) if session.get("monitor_away_since") else None
+    except ValueError:
+        away_since = None
+    monitored = [t for t in my_targets if t.id in scoped_target_ids and t.authorized and t.monitor_interval_days]
+    due = [monitor_service.next_run_at(t) for t in monitored]
+    return {
+        "monitor_engine": monitor_service.engine_status(current_app, now),
+        "monitor_activity": monitor_service.activity_totals(scoped_target_ids, now=now),
+        "monitor_runs": monitor_service.recent_runs(scoped_target_ids, 50),
+        "monitor_away": monitor_service.away_summary([t.id for t in my_targets], away_since),
+        "monitor_monitored_count": len(monitored),
+        "monitor_next_due": min(due) if due else None,
+        "monitor_now": now,
+    }
 
 
 def _workspace_context():
@@ -595,6 +634,7 @@ def _workspace_context():
     )
 
     return {
+        **_monitoring_context(my_targets, scoped_target_ids),
         "user": current_user,
         "targets": my_targets,
         "selected_target_id": selected_target_id,
@@ -650,7 +690,6 @@ def workspace_dashboard():
         monitor_choices=[(key, key.capitalize()) for key in MONITOR_INTERVALS],
         monitor_choice=lambda target: next((k for k, d in MONITOR_INTERVALS.items() if d == target.monitor_interval_days), "off"),
         monitor_next=monitor_service.next_run_at,
-        monitor_now=monitor_service.utcnow(),
         **context,
     )
 

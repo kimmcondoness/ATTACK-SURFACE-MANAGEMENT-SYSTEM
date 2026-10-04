@@ -1,6 +1,7 @@
 import os
 
-from flask import Flask, jsonify, redirect, request, url_for
+from flask import Flask, jsonify, redirect, request, session, url_for
+from flask_login import current_user, user_logged_in
 from sqlalchemy.engine import make_url
 
 from config import BASE_DIR, get_config
@@ -112,6 +113,27 @@ def create_app(config_object=None):
             app.extensions["monitor_scheduler_started"] = True
             monitor_service.start_scheduler(app, force=True)
 
+    # Monitoring carries on while people are signed out. So that the next sign-in can say what it did
+    # meanwhile, remember when each user was last here, and what that was at the moment they sign in.
+    @user_logged_in.connect_via(app)
+    def _remember_previous_visit(_sender, user):
+        previous = user.last_seen_at
+        session["monitor_away_since"] = previous.isoformat() if previous else None
+        _mark_seen(user)
+
+    @app.before_request
+    def _remember_this_visit():
+        if request.endpoint in (None, "static") or not current_user.is_authenticated:
+            return
+        _mark_seen(current_user)
+
+    def _mark_seen(user):
+        try:
+            monitor_service.mark_seen(user)
+        except Exception:   # noqa: BLE001 - bookkeeping must never fail a request
+            db.session.rollback()
+            app.logger.exception("Could not record when %s was last seen", user.username)
+
     @login_manager.unauthorized_handler
     def unauthorized():
         if request.path.startswith("/api/"):
@@ -130,6 +152,14 @@ def create_app(config_object=None):
     @app.route("/api/health", methods=["GET"])
     def health():
         return jsonify({"status": "ok"})
+
+    @app.route("/api/health/monitoring", methods=["GET"])
+    def monitoring_health():
+        """For an uptime checker: 200 while the monitoring engine is reporting in (or is switched off
+        on purpose), 503 when it has gone quiet. No sign-in needed; it reveals only timestamps."""
+        status = monitor_service.engine_status(app)
+        body = {key: status[key] for key in ("state", "label", "last_check_at", "age_seconds", "started_at", "monitored_targets")}
+        return jsonify({"monitoring": monitor_service.public_status(body)}), (200 if status["state"] in ("active", "disabled") else 503)
 
     @app.route("/", methods=["GET"])
     def index():

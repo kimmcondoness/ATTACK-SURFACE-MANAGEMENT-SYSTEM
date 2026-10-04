@@ -15,12 +15,17 @@ Three jobs live here.
    is reported as a "change".
 
 3. Alerts. When a monitored target changes in a way that matters, its owner gets one email.
+
+4. The record. Monitoring runs on the server, not in anyone's browser, so it carries on while
+   users are signed out. Two tables prove it: `monitor_runs` (every scan that counts as
+   monitoring, whoever or whatever started it) and `monitor_heartbeat` (the scheduler's pulse).
+   When a user signs back in, `away_summary` tells them what happened while they were gone.
 """
 
 import logging
 import os
 import threading
-from collections import namedtuple
+from collections import Counter, namedtuple
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -32,6 +37,8 @@ from models import (
     Asset,
     AuthorizedTarget,
     MonitorEvent,
+    MonitorHeartbeat,
+    MonitorRun,
     Scan,
     User,
     Vulnerability,
@@ -52,6 +59,18 @@ EVENT_LABELS = {
     "finding_new": "New finding",
     "finding_resolved": "Fixed",
     "finding_reopened": "Reopened",
+}
+
+_RUN_TERMINAL = ("completed", "failed", "stopped", "interrupted")
+_UNFINISHED_SCANS = ("pending", "running", "paused")
+# How each kind of change reads in a run's one-line summary: (singular, plural).
+_SUMMARY_WORDS = {
+    "asset_new": ("new asset", "new assets"),
+    "asset_missing": ("missing asset", "missing assets"),
+    "asset_back": ("asset back", "assets back"),
+    "finding_new": ("new finding", "new findings"),
+    "finding_resolved": ("fixed", "fixed"),
+    "finding_reopened": ("reopened", "reopened"),
 }
 
 Reconciled = namedtuple("Reconciled", "created resolved reopened")
@@ -126,7 +145,11 @@ def _claim(target: AuthorizedTarget, now: datetime) -> bool:
 def run_due(app, now: Optional[datetime] = None, starter=None) -> list:
     """Start the scan chain for every monitored target that is due. Returns their ids."""
     if starter is None:
-        from services.scan_runner import start_chain as starter
+        from functools import partial
+
+        from services.scan_runner import start_chain
+
+        starter = partial(start_chain, trigger="scheduled")
 
     now = now or utcnow()
     limit = app.config.get("MONITOR_MAX_CONCURRENT_SCANS", 1)
@@ -153,14 +176,31 @@ _scheduler_thread: Optional[threading.Thread] = None
 _scheduler_stop = threading.Event()
 
 
+def _tick(app, started_at: datetime):
+    """One scheduler check: start whatever is due, then write the heartbeat. The heartbeat is
+    written even when the check failed (carrying the error), so "alive but struggling" can be told
+    apart from "not running at all"."""
+    error = None
+    try:
+        with app.app_context():
+            try:
+                run_due(app)
+            except Exception as exc:   # noqa: BLE001 - one bad tick must never end monitoring
+                error = f"{type(exc).__name__}: {exc}"
+                db.session.rollback()
+                app.logger.exception("Monitoring scheduler tick failed")
+            record_heartbeat(started_at, error)
+    except Exception:   # noqa: BLE001 - not even the heartbeat may stop the loop
+        app.logger.exception("Monitoring heartbeat could not be written")
+
+
 def _scheduler_loop(app):
     poll = app.config.get("MONITOR_POLL_SECONDS", 60)
-    while not _scheduler_stop.wait(poll):
-        try:
-            with app.app_context():
-                run_due(app)
-        except Exception:   # noqa: BLE001 - one bad tick must never end monitoring
-            app.logger.exception("Monitoring scheduler tick failed")
+    started_at = utcnow()
+    while True:   # check straight away (catching up after downtime), then every `poll` seconds
+        _tick(app, started_at)
+        if _scheduler_stop.wait(poll):
+            break
 
 
 def start_scheduler(app, force: bool = False):
@@ -176,6 +216,13 @@ def start_scheduler(app, force: bool = False):
     with _scheduler_lock:
         if _scheduler_thread and _scheduler_thread.is_alive():
             return _scheduler_thread
+        try:   # before anything new can start: close what the previous process left half-done
+            with app.app_context():
+                recovered = recover_interrupted()
+            if recovered:
+                app.logger.warning("Monitoring: %s scan(s) were interrupted by the last shutdown and were closed.", recovered)
+        except Exception:   # noqa: BLE001 - e.g. a brand-new database that has no tables yet
+            app.logger.exception("Monitoring could not check for interrupted scans")
         _scheduler_stop.clear()
         _scheduler_thread = threading.Thread(target=_scheduler_loop, args=(app,), daemon=True, name="monitor-scheduler")
         _scheduler_thread.start()
@@ -185,6 +232,203 @@ def start_scheduler(app, force: bool = False):
 
 def stop_scheduler():
     _scheduler_stop.set()
+
+
+# ------------------------------------------------------------------- the record
+_ENGINE_LABELS = {
+    "active": "Monitoring engine active",
+    "stalled": "Monitoring engine not responding",
+    "waiting": "Monitoring engine has not reported yet",
+    "disabled": "Monitoring engine switched off",
+}
+SEEN_THROTTLE_SECONDS = 60
+
+
+def record_heartbeat(started_at: datetime, error: Optional[str] = None):
+    """Write the scheduler's pulse (see MonitorHeartbeat). Called after every check."""
+    beat = db.session.get(MonitorHeartbeat, 1)
+    if beat is None:
+        beat = MonitorHeartbeat(id=1)
+        db.session.add(beat)
+    beat.started_at = started_at
+    beat.last_tick_at = utcnow()
+    beat.pid = os.getpid()
+    beat.last_error = error[:255] if error else None
+    db.session.commit()
+
+
+def engine_status(app, now: Optional[datetime] = None) -> dict:
+    """Is monitoring alive? Read from the heartbeat the scheduler leaves in the database, so the
+    answer is the same whoever asks, and whether or not anyone is signed in."""
+    now = now or utcnow()
+    poll = app.config.get("MONITOR_POLL_SECONDS", 60)
+    beat = db.session.get(MonitorHeartbeat, 1)
+    last_tick = beat.last_tick_at if beat else None
+    age = max(0, int((now - last_tick).total_seconds())) if last_tick else None
+
+    if age is not None and age <= poll * 3 + 30:   # tolerates a couple of slow checks
+        state = "active"
+    elif not app.config.get("MONITOR_SCHEDULER_ENABLED", True):
+        state = "disabled"
+    else:
+        state = "stalled" if last_tick else "waiting"
+
+    return {
+        "state": state,
+        "label": _ENGINE_LABELS[state],
+        "last_check_at": last_tick,
+        "age_seconds": age,
+        "started_at": beat.started_at if beat else None,
+        "poll_seconds": poll,
+        "monitored_targets": AuthorizedTarget.query.filter(
+            AuthorizedTarget.monitor_interval_days.isnot(None), AuthorizedTarget.authorized.is_(True)
+        ).count(),
+        "running_scans": job_registry.running_count(),
+        "last_error": beat.last_error if beat else None,
+    }
+
+
+def public_status(status: dict) -> dict:
+    """`engine_status` as plain JSON (timestamps are ISO-8601, UTC)."""
+    return {key: (f"{value.isoformat()}Z" if isinstance(value, datetime) else value) for key, value in status.items()}
+
+
+def start_run(target: AuthorizedTarget, lead_scan: Scan, trigger: str) -> Optional[MonitorRun]:
+    """Open the monitoring record for a scan chain that is starting. Only a scheduled chain, or a
+    manual one on a monitored target, counts as monitoring. The caller commits."""
+    if trigger != "scheduled" and not target.monitor_interval_days:
+        return None
+    run = MonitorRun(target_id=target.id, lead_scan_id=lead_scan.id, trigger=trigger, status="running", started_at=utcnow())
+    db.session.add(run)
+    return run
+
+
+def finish_run(lead_scan_id: int, status: Optional[str] = None, alert_sent: bool = False) -> Optional[MonitorRun]:
+    """Close the monitoring record of the chain led by `lead_scan_id`: how it ended, how many
+    changes it found and whether the owner was emailed. A chain that was never recorded is skipped."""
+    run = MonitorRun.query.filter_by(lead_scan_id=lead_scan_id).order_by(MonitorRun.id.desc()).first()
+    if run is None or run.status in _RUN_TERMINAL:
+        return run
+    lead = db.session.get(Scan, lead_scan_id)
+    if status is None:
+        status = lead.status if lead and lead.status in ("failed", "stopped") else "completed"
+
+    run.status = status
+    run.finished_at = utcnow()
+    run.alert_sent = bool(alert_sent)
+    events = MonitorEvent.query.filter(MonitorEvent.target_id == run.target_id, MonitorEvent.created_at >= run.started_at).all()
+    run.changes = len(events)
+    run.summary = _run_summary(run, events, lead)
+    db.session.commit()
+    return run
+
+
+def _run_summary(run: MonitorRun, events: list, lead: Optional[Scan]) -> str:
+    if run.status == "failed":
+        return ((lead.result_summary if lead else None) or "The scan failed.")[:500]
+    prefix = "Stopped early. " if run.status == "stopped" else ""
+    if is_first_chain(run.target_id, run.lead_scan_id):
+        return prefix + "Baseline recorded. The first scan only sets the starting point, so no changes are reported."
+    if not events:
+        return prefix + "No changes since the previous scan."
+    counts = Counter(e.event_type for e in events)
+    parts = [f"{counts[kind]} {one if counts[kind] == 1 else many}" for kind, (one, many) in _SUMMARY_WORDS.items() if counts[kind]]
+    text = ", ".join(parts)
+    return prefix + text[:1].upper() + text[1:]
+
+
+def recent_runs(target_ids, limit: int = 50) -> list:
+    if not target_ids:
+        return []
+    return (
+        MonitorRun.query.filter(MonitorRun.target_id.in_(target_ids))
+        .order_by(MonitorRun.started_at.desc(), MonitorRun.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def activity_totals(target_ids, days: int = 7, now: Optional[datetime] = None) -> dict:
+    """How much monitoring has done lately: scheduled scans started and changes noticed."""
+    since = (now or utcnow()) - timedelta(days=days)
+    if not target_ids:
+        return {"days": days, "scheduled_runs": 0, "changes": 0}
+    return {
+        "days": days,
+        "scheduled_runs": MonitorRun.query.filter(
+            MonitorRun.target_id.in_(target_ids), MonitorRun.trigger == "scheduled", MonitorRun.started_at >= since
+        ).count(),
+        "changes": MonitorEvent.query.filter(MonitorEvent.target_id.in_(target_ids), MonitorEvent.created_at >= since).count(),
+    }
+
+
+def recover_interrupted() -> int:
+    """Close the scans and monitoring runs a previous process left unfinished.
+
+    Scans live on background threads, so a restart or crash ends them without a word and they would
+    otherwise sit in "running" for ever. Called as the scheduler starts, when nothing can be running
+    in this process yet. A scheduled run that was cut short is rescheduled to start at the next check,
+    so a restart does not cost a monitored target a whole interval (a monthly target would otherwise
+    wait a month). Returns how many scans were closed."""
+    if job_registry.running_count():
+        return 0   # something really is running here: leave it alone
+    now = utcnow()
+    stuck = Scan.query.filter(Scan.status.in_(_UNFINISHED_SCANS)).all()
+    for scan in stuck:
+        scan.status = "failed"
+        scan.completed_at = now
+        scan.result_summary = "Interrupted: the server stopped before this scan finished."
+
+    for run in MonitorRun.query.filter_by(status="running").all():
+        run.status = "interrupted"
+        run.finished_at = now
+        run.summary = "The server stopped before this scan finished."
+        target = db.session.get(AuthorizedTarget, run.target_id)
+        if run.trigger == "scheduled" and target and target.monitor_interval_days:
+            run.summary += " It will be started again at the next check."
+            target.monitor_last_run_at = now - timedelta(days=target.monitor_interval_days)
+    db.session.commit()
+    return len(stuck)
+
+
+def visible_target_ids(user) -> list:
+    """The targets whose monitoring this user may see: their own, or all of them for the roles
+    that work across the organisation (admin, threat intelligence)."""
+    from models import ROLE_IT_ADMIN, ROLE_THREAT_INTEL
+
+    query = AuthorizedTarget.query.with_entities(AuthorizedTarget.id)
+    if user.role not in (ROLE_IT_ADMIN, ROLE_THREAT_INTEL):
+        query = query.filter(AuthorizedTarget.owner_id == user.id)
+    return [row.id for row in query.all()]
+
+
+def mark_seen(user, now: Optional[datetime] = None) -> bool:
+    """Remember that `user` is here now (at most once a minute). A later sign-in compares against it."""
+    now = now or utcnow()
+    if user.last_seen_at and (now - user.last_seen_at).total_seconds() < SEEN_THROTTLE_SECONDS:
+        return False
+    user.last_seen_at = now
+    db.session.commit()
+    return True
+
+
+def away_summary(target_ids, since: Optional[datetime]) -> Optional[dict]:
+    """What monitoring did for these targets since `since` (when the user was last here), or None
+    when there is nothing to tell: monitoring only deserves a mention if it did something."""
+    if since is None or not target_ids:
+        return None
+    runs = MonitorRun.query.filter(
+        MonitorRun.target_id.in_(target_ids), MonitorRun.trigger == "scheduled", MonitorRun.started_at >= since
+    ).all()
+    changes = MonitorEvent.query.filter(MonitorEvent.target_id.in_(target_ids), MonitorEvent.created_at >= since).count()
+    if not runs and not changes:
+        return None
+    return {
+        "since": since,
+        "runs": len(runs),
+        "failed": sum(1 for r in runs if r.status in ("failed", "interrupted")),
+        "changes": changes,
+    }
 
 
 # ------------------------------------------------------------------------ events

@@ -27,6 +27,10 @@ MONITOR_INTERVALS = {"off": None, "daily": 1, "weekly": 7, "monthly": 30}
 # What the monitor records when a re-scan finds something different from last time.
 EVENT_TYPES = ("asset_new", "asset_missing", "asset_back", "finding_new", "finding_resolved", "finding_reopened")
 
+# The monitoring log: what started a scan chain, and how it ended.
+RUN_TRIGGERS = ("scheduled", "manual")
+RUN_STATUSES = ("running", "completed", "failed", "stopped", "interrupted")
+
 
 class User(UserMixin, db.Model):
     __tablename__ = "users"
@@ -40,6 +44,9 @@ class User(UserMixin, db.Model):
     role = db.Column(db.String(30), nullable=False, default=ROLE_ANALYST)
     is_active_flag = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # When this user last made a request. Continuous monitoring keeps running while they are
+    # signed out; this is how the next sign-in can say what happened in the meantime.
+    last_seen_at = db.Column(db.DateTime)
 
     targets = db.relationship("AuthorizedTarget", backref="owner", lazy=True)
 
@@ -88,6 +95,12 @@ class AuthorizedTarget(db.Model):
     events = db.relationship(
         "MonitorEvent",
         primaryjoin="AuthorizedTarget.id == foreign(MonitorEvent.target_id)",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+    runs = db.relationship(
+        "MonitorRun",
+        primaryjoin="AuthorizedTarget.id == foreign(MonitorRun.target_id)",
         lazy=True,
         cascade="all, delete-orphan",
     )
@@ -309,4 +322,73 @@ class MonitorEvent(db.Model):
             "severity": self.severity,
             "detail": self.detail,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class MonitorRun(db.Model):
+    """One scan chain that counts as monitoring (started by the scheduler, or by hand on a
+    monitored target). It is the permanent record that monitoring kept working whether or not
+    anyone was signed in: the scheduler writes it, the dashboard only reads it."""
+
+    __tablename__ = "monitor_runs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    target_id = db.Column(db.Integer, nullable=False, index=True)   # see AuthorizedTarget.events
+    lead_scan_id = db.Column(db.Integer, index=True)                # the chain's asset_discovery scan
+    trigger = db.Column(db.String(10), nullable=False, default="scheduled")
+    status = db.Column(db.String(20), nullable=False, default="running")
+    started_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    finished_at = db.Column(db.DateTime)
+    changes = db.Column(db.Integer, nullable=False, default=0)      # MonitorEvents recorded during the run
+    alert_sent = db.Column(db.Boolean, nullable=False, default=False)
+    summary = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "target_id": self.target_id,
+            "lead_scan_id": self.lead_scan_id,
+            "trigger": self.trigger,
+            "status": self.status,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "changes": self.changes,
+            "alert_sent": self.alert_sent,
+            "summary": self.summary,
+        }
+
+
+class MonitorHeartbeat(db.Model):
+    """The scheduler's pulse: one row (id 1) it rewrites on every check. Because it lives in the
+    database and not in a session, anyone can see whether monitoring is alive, signed in or not."""
+
+    __tablename__ = "monitor_heartbeat"
+
+    id = db.Column(db.Integer, primary_key=True)
+    started_at = db.Column(db.DateTime)      # when the scheduler thread started
+    last_tick_at = db.Column(db.DateTime)    # its most recent check
+    pid = db.Column(db.Integer)
+    last_error = db.Column(db.String(255))   # what the last check died of, if it did
+
+
+class ReportShare(db.Model):
+    """A report an analyst has shared with Threat Intelligence. Threat Intelligence downloads
+    the very same file the analyst exported. A report is shared at most once."""
+
+    __tablename__ = "report_shares"
+
+    id = db.Column(db.Integer, primary_key=True)
+    # No database-level foreign keys, for the reason given at AuthorizedTarget.events.
+    report_id = db.Column(db.Integer, nullable=False, unique=True)
+    shared_by = db.Column(db.Integer, nullable=False)
+    note = db.Column(db.String(500))
+    shared_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "report_id": self.report_id,
+            "shared_by": self.shared_by,
+            "note": self.note,
+            "shared_at": self.shared_at.isoformat() if self.shared_at else None,
         }
