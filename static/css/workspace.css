@@ -1535,6 +1535,7 @@ tbody tr:hover {
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   background: var(--panel-bg);
+  color: var(--panel-text);
   padding: 0.5rem 1.5rem 1rem;
   min-width: 0;
   /* Same baseline .ws-panel sets: without it, plain text (dd values, headings)
