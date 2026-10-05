@@ -1,5 +1,6 @@
 import ipaddress
 import re
+import unicodedata
 from urllib.parse import urlsplit
 
 # Reject anything that could be used for shell/command injection if it
@@ -14,7 +15,7 @@ _DOMAIN_RE = re.compile(
 _URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
 
 
-USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,30}$")
+USERNAME_MAX_LENGTH = 80   # the size of the users.username column; the only length limit
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -22,10 +23,26 @@ class ValidationError(ValueError):
     pass
 
 
+def normalize_username(value: str) -> str:
+    """Trim a username and squeeze runs of spaces to one. Applied when an account is created and when
+    someone signs in, so a name that was saved is always the name that is looked up."""
+    if not isinstance(value, str):   # e.g. a JSON login body with {"username": 123}
+        return ""
+    return re.sub(r" {2,}", " ", value.strip())
+
+
 def validate_username(value: str) -> str:
-    value = (value or "").strip()
-    if not USERNAME_RE.match(value):
-        raise ValidationError("Username must be 3-30 characters (letters, numbers, dots, underscores, hyphens).")
+    """A username can be any name the person likes: any length up to the database column, spaces and
+    symbols included. Only what could do harm is refused: line breaks and other invisible or control
+    characters, which could forge lines in the audit log or make two different names look the same."""
+    value = normalize_username(value)
+    if not value:
+        raise ValidationError("Enter a username.")
+    if len(value) > USERNAME_MAX_LENGTH:
+        raise ValidationError(f"Username can be at most {USERNAME_MAX_LENGTH} characters.")
+    for char in value:
+        if char != " " and unicodedata.category(char) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Zs"):
+            raise ValidationError("Username cannot contain line breaks or invisible characters.")
     return value
 
 

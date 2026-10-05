@@ -32,7 +32,7 @@ from utils.captcha import generate_captcha, verify_captcha
 from utils.device_trust import COOKIE_NAME as DEVICE_TRUST_COOKIE, set_device_trust_cookie, verify_device_trust_token
 from utils.mailer import send_otp_email
 from utils.otp import generate_otp, verify_otp
-from utils.validators import EMAIL_RE, USERNAME_RE, ValidationError, validate_password, validate_role
+from utils.validators import EMAIL_RE, ValidationError, normalize_username, validate_password, validate_role, validate_username
 
 auth_pages_bp = Blueprint("auth_pages", __name__)
 
@@ -59,7 +59,6 @@ _OTP_RESEND_COOLDOWN_SECONDS = 60
 # IT Administrators are never self-registered; an existing admin assigns that role.
 _SIGNUP_ROLES = (ROLE_ANALYST, ROLE_THREAT_INTEL)
 
-_USERNAME_RE = USERNAME_RE
 _EMAIL_RE = EMAIL_RE
 
 
@@ -135,7 +134,7 @@ def login_page():
         question = _new_captcha()
         return render_template("login.html", captcha_question=question)
 
-    username = request.form.get("username", "").strip()
+    username = normalize_username(request.form.get("username", ""))
     password = request.form.get("password", "")
     captcha_answer = request.form.get("captcha_answer", "")
 
@@ -223,8 +222,10 @@ def signup_page():
         return reject("First and last name are required.")
     if form["role"] not in _SIGNUP_ROLES:
         return reject("Choose a valid role.")
-    if not _USERNAME_RE.match(form["username"]):
-        return reject("Username must be 3-30 characters (letters, numbers, dots, underscores, hyphens).")
+    try:
+        form["username"] = validate_username(form["username"])
+    except ValidationError as exc:
+        return reject(str(exc))
     if not _EMAIL_RE.match(form["email"]):
         return reject("Enter a valid email address.")
     try:

@@ -14,13 +14,13 @@
       </div>
       <div class="ud-form-row">
         <label>Username
-          <input type="text" name="username" value="{{ form.get('username', subject.username) }}" maxlength="30" required>
+          <input type="text" name="username" value="{{ form.get('username', subject.username) }}" maxlength="80" required>
         </label>
         <label>Email
           <input type="text" name="email" value="{{ form.get('email', subject.email) }}" maxlength="120" required>
         </label>
       </div>
-      <p class="ud-note">Only an IT Administrator can change these. Usernames are 3-30 letters, numbers, dots, underscores or hyphens, and both username and email must be unique.</p>
+      <p class="ud-note">Only an IT Administrator can change these. A username can be any name up to 80 characters, and both username and email must be unique.</p>
       <button type="submit" class="btn-mini btn-mini-save">Save changes</button>
     </form>
   </details>

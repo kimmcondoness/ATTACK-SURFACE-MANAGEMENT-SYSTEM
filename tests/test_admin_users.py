@@ -118,8 +118,9 @@ def test_admin_can_change_name_username_and_email(admin_client, analyst_user):
 @pytest.mark.parametrize(
     "overrides,message",
     [
-        ({"username": "ab"}, "Username must be 3-30"),
-        ({"username": "has space"}, "Username must be 3-30"),
+        ({"username": "   "}, "Enter a username"),
+        ({"username": "x" * 81}, "at most 80 characters"),
+        ({"username": "two\nlines"}, "line breaks or invisible characters"),
         ({"email": "not-an-email"}, "valid email"),
         ({"first_name": ""}, "First and last name are required"),
         ({"username": "admin"}, "already taken"),

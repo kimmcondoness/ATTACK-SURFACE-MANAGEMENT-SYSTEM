@@ -4,6 +4,7 @@ from flask_login import current_user, login_required, login_user, logout_user
 from extensions import limiter
 from models import User
 from utils.audit import log_action
+from utils.validators import normalize_username
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -19,7 +20,7 @@ def csrf_token():
 @limiter.limit("10 per minute")
 def login():
     payload = request.get_json(silent=True) or {}
-    username = payload.get("username", "")
+    username = normalize_username(payload.get("username", ""))
     password = payload.get("password", "")
 
     user = User.query.filter_by(username=username).first()
