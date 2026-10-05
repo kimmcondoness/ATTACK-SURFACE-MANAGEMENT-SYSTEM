@@ -199,8 +199,34 @@ Turn it on per target (Your targets, Monitoring column): **Daily, Weekly or Mont
   only logged.
 - Settings (`config.py`): `MONITOR_SCHEDULER_ENABLED`, `MONITOR_POLL_SECONDS`,
   `MONITOR_MAX_CONCURRENT_SCANS`, `MONITOR_ALERT_EMAILS`.
-- Existing databases are upgraded in place at start-up (new columns and the
-  `monitor_events` table are added, nothing is lost): see `database/upgrade.py`.
+- Existing databases are upgraded in place at start-up (new columns and the new tables
+  are added, nothing is lost): see `database/upgrade.py`.
+
+### Monitoring keeps running when nobody is signed in, and you can prove it
+
+The scheduler lives in the server process, not in a browser session, so signing out (or a
+session timing out) never pauses it. Three things make that visible:
+
+- **Monitoring log** (`monitor_runs` table, *Continuous monitoring* panel on the Dashboard):
+  every scan the scheduler starts, and every manual scan of a monitored target, with when it
+  started, who started it (Scheduler / You), how it ended (Completed, Failed, Stopped,
+  Interrupted), how long it took, what it found ("2 new assets, 1 new finding") and whether the
+  owner was emailed.
+- **Engine heartbeat** (`monitor_heartbeat` table): the scheduler writes its pulse after every
+  check, so the status line ("Monitoring engine active, last check 22s ago") comes from the
+  database and is true whoever is looking. It turns amber/red when the scheduler goes quiet.
+  `GET /workspace/monitoring/status` returns the same as JSON, and `GET /api/health/monitoring`
+  (no sign-in) returns 200 while the engine is alive and 503 when it is not, for an uptime checker.
+- **While you were away**: `users.last_seen_at` remembers when each user was last here. When they
+  sign back in, the Overview and Dashboard say, for example, "Monitoring kept running while you
+  were away. Since you were last here (2026-10-03 23:35 UTC), 3 scheduled scans ran and 2 changes
+  were detected."
+
+A restart does not lose monitoring either: schedules and timestamps live in the database, the
+scheduler checks straight away when the server starts (catching up on anything that came due while
+it was down), and any scan the previous process left half-done is closed as *Interrupted*. If that
+was a scheduled scan, it is started again at the next check, so a monthly target does not wait a
+month because of a restart.
 
 Only authorized targets are ever scanned, on a schedule or otherwise.
 
@@ -308,9 +334,13 @@ Main tables
 - scans
 - reports
 - monitor_events (changes noticed by continuous monitoring)
+- monitor_runs (the monitoring log: every scan that counts as monitoring, and how it ended)
+- monitor_heartbeat (the scheduler's pulse: one row, rewritten on every check)
+- report_shares (reports an analyst has shared with Threat Intelligence)
 
 Continuous monitoring adds `monitor_interval_days` and `monitor_last_run_at` to
-`authorized_targets`, and `last_seen_at`, `status` and `missed_runs` to `assets`.
+`authorized_targets`, `last_seen_at`, `status` and `missed_runs` to `assets`, and `last_seen_at`
+to `users`.
 
 Relationships
 
@@ -460,6 +490,14 @@ Report contains
 
 Report history shows each report's Read / Unread state, per user.
 
+Share with Threat Intelligence
+
+- Each report in the history has a **Share** button (with an optional note). The report appears in
+  the Threat Intelligence inbox and they download the very same file the analyst exported.
+- The history shows whether it is shared and whether Threat Intelligence has downloaded it, and the
+  analyst can **Withdraw** it at any time. A report is shared at most once; only its owner can share
+  or withdraw it.
+
 ---
 
 ## Threat Intelligence
@@ -476,10 +514,14 @@ Display
   of exploitation in the next 30 days), a colour-coded status (open in red, in progress
   in amber), CVE links to the NIST NVD, and a keyword / severity filter
 - Recent CISA KEV catalog additions
+- **Reports shared by analysts**: the inbox of reports Cybersecurity Analysts have shared (target,
+  format, who shared it, when, their note, New / Downloaded). Download gives the identical PDF or
+  CSV the analyst exported. "New" is tracked per Threat Intelligence analyst.
 
 Functions
 
 - Export a Threat Briefing (CSV)
+- Download reports shared by analysts
 
 Read-only: cannot create targets, run scans, or change finding status.
 

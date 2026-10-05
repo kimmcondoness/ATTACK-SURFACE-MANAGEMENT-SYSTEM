@@ -26,6 +26,8 @@
         {% endif %}
       {% endwith %}
 
+      {% include "_monitor_away.html" %}
+
       <form method="GET" id="target-filter-form" class="target-filter">
         <label for="target-filter">Viewing:</label>
         <select name="target_id" id="target-filter">
@@ -163,6 +165,54 @@
           "severityTotals": {"critical": {{ severity_totals.critical }}, "high": {{ severity_totals.high }}, "medium": {{ severity_totals.medium }}, "low": {{ severity_totals.low }}}
         }
       </script>
+
+      <section id="monitoring" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Continuous monitoring{% if selected_target_id %}: {{ target_map.get(selected_target_id) }}{% endif %}</h2>
+          <span>{{ monitor_monitored_count }} target{{ '' if monitor_monitored_count == 1 else 's' }} monitored</span>
+        </div>
+        {% include "_monitor_engine.html" %}
+        <p class="ws-report-summary">
+          Monitoring runs on the server, not in your browser. It keeps scanning while you are signed out and carries
+          on where it left off when you sign back in, and every scan it starts is recorded below.
+        </p>
+        <div class="monitor-totals">
+          <div><span class="n">{{ monitor_activity.scheduled_runs }}</span><span class="l">Scheduled scans, last {{ monitor_activity.days }} days</span></div>
+          <div><span class="n">{{ monitor_activity.changes }}</span><span class="l">Changes detected, last {{ monitor_activity.days }} days</span></div>
+          <div>
+            <span class="n n-small">{% if monitor_next_due %}{% if monitor_next_due <= monitor_now %}due now{% else %}{{ monitor_next_due.strftime('%Y-%m-%d %H:%M') }}{% endif %}{% else %}-{% endif %}</span>
+            <span class="l">Next scheduled scan (UTC)</span>
+          </div>
+        </div>
+        {% if monitor_runs %}
+        <table data-paginate="10">
+          <thead>
+            <tr><th>Started (UTC)</th><th>Target</th><th>Started by</th><th>Status</th><th>Took</th><th>Result</th><th>Alert</th></tr>
+          </thead>
+          <tbody>
+            {% for r in monitor_runs %}
+            <tr>
+              <td class="text-mono">{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '-' }}</td>
+              <td class="text-mono">{{ target_map.get(r.target_id, '-') }}</td>
+              <td>{% if r.trigger == 'scheduled' %}<span class="change-badge change-new">Scheduler</span>{% else %}<span class="pill pill-inactive">You</span>{% endif %}</td>
+              <td>
+                {% if r.status == 'completed' %}<span class="pill pill-completed">Completed</span>
+                {% elif r.status == 'failed' %}<span class="pill pill-failed">Failed</span>
+                {% elif r.status == 'interrupted' %}<span class="pill pill-failed">Interrupted</span>
+                {% elif r.status == 'stopped' %}<span class="pill pill-inactive">Stopped</span>
+                {% else %}<span class="pill pill-running">Running</span>{% endif %}
+              </td>
+              <td class="text-mono">{% if r.finished_at and r.started_at %}{% set secs = (r.finished_at - r.started_at).total_seconds()|int %}{{ secs // 60 }}m {{ '%02d'|format(secs % 60) }}s{% else %}-{% endif %}</td>
+              <td class="scan-history-summary">{{ r.summary or '-' }}</td>
+              <td>{% if r.alert_sent %}<span class="pill pill-active">Emailed</span>{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="empty-row">No monitoring scans yet. Turn on monitoring for a target (Monitoring column, Your targets below) and each scheduled scan will be recorded here, even while you are signed out.</p>
+        {% endif %}
+      </section>
 
       {% set change_labels = {
         'asset_new': ('New asset', 'change-new'),
@@ -326,6 +376,7 @@
   <script src="{{ url_for('static', filename='js/table-pager.js') }}"></script>
   <script src="{{ url_for('static', filename='js/vendor/chart.umd.js') }}"></script>
   <script src="{{ url_for('static', filename='js/live-scan.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/monitor-status.js') }}"></script>
 
   {% include "_cookie_banner.html" %}
 </body>

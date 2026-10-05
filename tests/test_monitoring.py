@@ -2,11 +2,12 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from extensions import db
-from models import Asset, AuditLog, AuthorizedTarget, MonitorEvent, Scan, User, Vulnerability
+from models import Asset, AuditLog, AuthorizedTarget, MonitorEvent, MonitorHeartbeat, MonitorRun, Scan, User, Vulnerability
 from scanner.base import ScanControl, ScannerResult
 from scanner.nuclei_scanner import NucleiScanner
 from services import job_registry, monitor_service, scan_runner, scan_service
@@ -773,3 +774,508 @@ def test_deleting_a_target_removes_its_events(app, analyst_user):
     db.session.delete(target)
     db.session.commit()
     assert MonitorEvent.query.count() == 0
+
+
+# ============================================================ the record: monitoring that can be tracked
+# Monitoring runs on the server, so it carries on while nobody is signed in. These tests prove it is
+# *recorded* (monitor_runs, the heartbeat) and that a returning user is told what happened meanwhile.
+class InlineThread:
+    """Runs its target the moment it is started, so a "background" scan has finished when start_chain returns."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None, name=None):
+        self._target, self._args, self._kwargs = target, args, kwargs or {}
+
+    def start(self):
+        self._target(*self._args, **self._kwargs)
+
+    def is_alive(self):
+        return False
+
+    def join(self, timeout=None):
+        pass
+
+
+@pytest.fixture
+def inline_scans(monkeypatch):
+    monkeypatch.setattr(scan_runner, "threading", SimpleNamespace(Thread=InlineThread))
+
+
+def runs_of(target):
+    db.session.expire_all()
+    return MonitorRun.query.filter_by(target_id=target.id).order_by(MonitorRun.id).all()
+
+
+def test_a_scheduled_scan_is_recorded_while_nobody_is_signed_in(app, analyst_user, scripted_world, inline_scans):
+    target = make_target(analyst_user, interval=1, last_run=datetime.utcnow() - timedelta(days=2))
+    FakeSubfinder.hosts = ["www.example.com"]
+
+    # the scheduler's own call: no request, no session, no login anywhere
+    assert monitor_service.run_due(app) == [target.id]
+
+    [run] = runs_of(target)
+    assert (run.trigger, run.status) == ("scheduled", "completed")
+    assert run.finished_at >= run.started_at and run.changes == 0 and run.alert_sent is False
+    assert "Baseline recorded" in run.summary
+    assert db.session.get(Scan, run.lead_scan_id).scan_type == "asset_discovery"
+
+
+def test_later_runs_say_what_they_found(app, analyst_user, scripted_world, inline_scans):
+    target = make_target(analyst_user, interval=1, last_run=datetime.utcnow() - timedelta(days=2))
+    FakeSubfinder.hosts = ["www.example.com"]
+    monitor_service.run_due(app)
+
+    FakeSubfinder.hosts = ["www.example.com", "new.example.com", "other.example.com"]
+    db.session.expire_all()
+    target.monitor_last_run_at = datetime.utcnow() - timedelta(days=2)
+    db.session.commit()
+    monitor_service.run_due(app)
+
+    first, second = runs_of(target)
+    assert second.changes == 2 and second.summary == "2 new assets"
+    assert first.summary.startswith("Baseline") and second.id > first.id
+
+
+def test_a_run_with_nothing_new_says_so(app, analyst_user, scripted_world, inline_scans):
+    target = make_target(analyst_user, interval=1, last_run=datetime.utcnow() - timedelta(days=2))
+    FakeSubfinder.hosts = ["www.example.com"]
+    monitor_service.run_due(app)
+    db.session.expire_all()
+    target.monitor_last_run_at = datetime.utcnow() - timedelta(days=2)
+    db.session.commit()
+    monitor_service.run_due(app)
+
+    assert runs_of(target)[1].summary == "No changes since the previous scan." and runs_of(target)[1].changes == 0
+
+
+def test_a_manual_scan_counts_as_monitoring_only_on_a_monitored_target(app, analyst_user, monkeypatch, inline_scans):
+    monkeypatch.setattr(scan_service, "run_scan_chain", lambda target, user_id, control, lead_scan=None: None)
+    plain = make_target(analyst_user, "plain.example.com")
+    watched = make_target(analyst_user, "watched.example.com", interval=7)
+
+    scan_runner.start_chain(app, plain, analyst_user.id)
+    scan_runner.start_chain(app, watched, analyst_user.id)
+
+    assert runs_of(plain) == []
+    assert [(r.trigger, r.status) for r in runs_of(watched)] == [("manual", "completed")]
+
+
+def test_a_crashed_scheduled_scan_is_recorded_as_failed(app, analyst_user, monkeypatch, inline_scans):
+    def crash(*args, **kwargs):
+        raise RuntimeError("scanner exploded")
+
+    monkeypatch.setattr(scan_service, "run_scan_chain", crash)
+    target = make_target(analyst_user, interval=1, last_run=datetime.utcnow() - timedelta(days=2))
+
+    monitor_service.run_due(app)
+
+    [run] = runs_of(target)
+    assert run.status == "failed" and "scanner exploded" in run.summary and run.finished_at
+
+
+def test_a_stopped_scan_is_recorded_as_stopped(app, analyst_user, monkeypatch):
+    monkeypatch.setattr(scan_service, "run_scan_chain", lambda *a, **k: None)
+    target = make_target(analyst_user, interval=7)
+    lead = Scan(target_id=target.id, scan_type="asset_discovery", status="running", started_by=analyst_user.id)
+    db.session.add(lead)
+    db.session.flush()
+    monitor_service.start_run(target, lead, "manual")
+    db.session.commit()
+    control = ScanControl()
+    control.request_stop()
+
+    scan_runner.run_chain_in_background(app, target.id, analyst_user.id, control, lead.id)
+
+    [run] = runs_of(target)
+    assert run.status == "stopped" and run.summary.startswith("Stopped early.")
+
+
+def test_the_run_notes_whether_the_owner_was_emailed(app, analyst_user, monkeypatch):
+    monkeypatch.setattr(scan_service, "run_scan_chain", lambda *a, **k: None)
+    monkeypatch.setattr(monitor_service, "send_digest", lambda app_, target_id, since: True)
+    target = make_target(analyst_user, interval=7)
+    lead = Scan(target_id=target.id, scan_type="asset_discovery", status="completed", started_by=analyst_user.id)
+    db.session.add(lead)
+    db.session.flush()
+    monitor_service.start_run(target, lead, "scheduled")
+    db.session.commit()
+
+    scan_runner.run_chain_in_background(app, target.id, analyst_user.id, ScanControl(), lead.id)
+
+    assert runs_of(target)[0].alert_sent is True
+
+
+def test_a_chain_that_was_never_recorded_is_left_alone(app, analyst_user):
+    assert monitor_service.finish_run(12345) is None
+    assert MonitorRun.query.count() == 0
+
+
+# ---- the heartbeat
+def test_every_check_leaves_a_heartbeat_the_status_reads(app, analyst_user, monkeypatch):
+    monkeypatch.setattr(monitor_service, "run_due", lambda app_: [])
+    assert monitor_service.engine_status(app)["state"] == "disabled"                                  # nothing has reported (and tests run no scheduler)
+
+    started = datetime.utcnow() - timedelta(hours=3)
+    monitor_service._tick(app, started)
+
+    status = monitor_service.engine_status(app)
+    assert status["state"] == "active" and status["age_seconds"] < 5 and status["last_error"] is None
+    assert status["started_at"] == started and status["poll_seconds"] == 60
+    assert MonitorHeartbeat.query.count() == 1
+    monitor_service._tick(app, started)
+    assert MonitorHeartbeat.query.count() == 1                                                       # one row, rewritten each time
+
+
+def test_a_failing_check_still_beats_and_shows_its_error(app, monkeypatch):
+    def boom(app_):
+        raise RuntimeError("database hiccup")
+
+    monkeypatch.setattr(monitor_service, "run_due", boom)
+    monitor_service._tick(app, datetime.utcnow())
+
+    status = monitor_service.engine_status(app)
+    assert status["state"] == "active" and "RuntimeError: database hiccup" in status["last_error"]
+
+    monkeypatch.setattr(monitor_service, "run_due", lambda app_: [])
+    monitor_service._tick(app, datetime.utcnow())
+    assert monitor_service.engine_status(app)["last_error"] is None                                  # recovered
+
+
+def test_the_engine_is_stalled_when_its_heartbeat_goes_quiet(app, monkeypatch):
+    monkeypatch.setitem(app.config, "MONITOR_SCHEDULER_ENABLED", True)
+    assert monitor_service.engine_status(app)["state"] == "waiting"                                  # never reported
+
+    db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=NOW))
+    db.session.commit()
+    assert monitor_service.engine_status(app, now=NOW + timedelta(seconds=200))["state"] == "active"  # within 3 polls + slack
+    quiet = monitor_service.engine_status(app, now=NOW + timedelta(minutes=10))
+    assert quiet["state"] == "stalled" and quiet["age_seconds"] == 600
+
+    monkeypatch.setitem(app.config, "MONITOR_SCHEDULER_ENABLED", False)
+    assert monitor_service.engine_status(app, now=NOW + timedelta(minutes=10))["state"] == "disabled"
+
+
+def test_the_status_counts_monitored_targets(app, analyst_user):
+    make_target(analyst_user, "a.example.com", interval=7)
+    make_target(analyst_user, "b.example.com", interval=1, authorized=False)                         # never scanned, so not monitored
+    make_target(analyst_user, "c.example.com")
+    assert monitor_service.engine_status(app)["monitored_targets"] == 1
+
+
+def test_a_new_scheduler_thread_checks_straight_away(serving, monkeypatch):
+    """The first check is immediate, so a restarted server catches up and reports in without waiting a minute."""
+    ticks = []
+    monkeypatch.setattr(monitor_service, "_tick", lambda app_, started: ticks.append(started))
+    monkeypatch.setitem(serving.config, "MONITOR_POLL_SECONDS", 3600)
+
+    thread = monitor_service.start_scheduler(serving)
+
+    deadline = time.time() + 5
+    while not ticks and time.time() < deadline:
+        time.sleep(0.02)
+    assert len(ticks) == 1 and thread.is_alive()
+
+
+# ---- surviving a restart
+def _unfinished(owner, interval=7, trigger="scheduled"):
+    target = make_target(owner, interval=interval, last_run=datetime.utcnow() - timedelta(hours=1))
+    lead = Scan(target_id=target.id, scan_type="asset_discovery", status="running", started_by=owner.id)
+    phase = Scan(target_id=target.id, scan_type="port_discovery", status="running", started_by=owner.id)
+    db.session.add_all([lead, phase])
+    db.session.flush()
+    run = monitor_service.start_run(target, lead, trigger)
+    db.session.commit()
+    return target, lead, phase, run
+
+
+def test_a_scan_cut_short_by_a_restart_is_closed_and_a_scheduled_one_is_retried(app, analyst_user):
+    target, lead, phase, run = _unfinished(analyst_user, interval=30)
+    assert not monitor_service.is_due(target)
+
+    assert monitor_service.recover_interrupted() == 2
+
+    db.session.refresh(run)
+    assert run.status == "interrupted" and "started again at the next check" in run.summary
+    assert (lead.status, phase.status) == ("failed", "failed") and "Interrupted" in lead.result_summary
+    assert monitor_service.is_due(target)                                                            # not a month's wait
+    assert monitor_service.run_due(app, starter=lambda *a: None) == [target.id]
+
+
+def test_a_manual_scan_cut_short_is_closed_but_not_rescheduled(app, analyst_user):
+    target, _, _, run = _unfinished(analyst_user, trigger="manual")
+    before = target.monitor_last_run_at
+
+    monitor_service.recover_interrupted()
+
+    db.session.refresh(run)
+    assert run.status == "interrupted" and "started again" not in run.summary
+    assert target.monitor_last_run_at == before
+
+
+def test_a_scan_that_really_is_running_is_never_closed(app, analyst_user, live_job):
+    _, lead, _, run = _unfinished(analyst_user)
+    live_job(lead.id)
+
+    assert monitor_service.recover_interrupted() == 0
+
+    db.session.refresh(run)
+    assert run.status == "running" and lead.status == "running"
+
+
+def test_finished_scans_are_not_touched_by_the_recovery(app, analyst_user):
+    target = make_target(analyst_user, interval=7)
+    done = Scan(target_id=target.id, scan_type="asset_discovery", status="completed", started_by=analyst_user.id)
+    db.session.add(done)
+    db.session.commit()
+    assert monitor_service.recover_interrupted() == 0 and done.status == "completed"
+
+
+def test_starting_the_scheduler_closes_what_the_last_process_left_behind(serving, analyst_user, monkeypatch):
+    monkeypatch.setattr(monitor_service, "_scheduler_loop", lambda app_: None)
+    _, _, _, run = _unfinished(analyst_user)
+
+    thread = monitor_service.start_scheduler(serving)
+
+    assert thread is not None
+    thread.join(3)
+    db.session.refresh(run)
+    assert run.status == "interrupted"
+
+
+def test_a_database_problem_at_start_up_does_not_stop_the_scheduler(serving, monkeypatch):
+    monkeypatch.setattr(monitor_service, "_scheduler_loop", lambda app_: None)
+
+    def broken():
+        raise RuntimeError("no such table")
+
+    monkeypatch.setattr(monitor_service, "recover_interrupted", broken)
+    assert monitor_service.start_scheduler(serving) is not None
+
+
+# ---- what a returning user is told
+def _run(target, started_at, trigger="scheduled", status="completed"):
+    run = MonitorRun(target_id=target.id, trigger=trigger, status=status, started_at=started_at, finished_at=started_at)
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def _event_at(target, created_at, kind="asset_new"):
+    db.session.add(MonitorEvent(target_id=target.id, event_type=kind, subject="x.example.com", created_at=created_at))
+    db.session.commit()
+
+
+def test_the_away_summary_counts_scheduled_scans_and_changes_since_the_last_visit(app, analyst_user):
+    target = make_target(analyst_user, interval=1)
+    since = NOW
+    _run(target, NOW - timedelta(hours=5))                                                           # before they left
+    _run(target, NOW + timedelta(hours=1))
+    _run(target, NOW + timedelta(hours=2), status="failed")
+    _run(target, NOW + timedelta(hours=3), trigger="manual")                                         # their own, not "monitoring on its own"
+    _event_at(target, NOW - timedelta(hours=5))
+    _event_at(target, NOW + timedelta(hours=1))
+    _event_at(target, NOW + timedelta(hours=2), "finding_new")
+
+    assert monitor_service.away_summary([target.id], since) == {"since": since, "runs": 2, "failed": 1, "changes": 2}
+
+
+def test_there_is_nothing_to_say_when_monitoring_did_nothing_or_the_user_is_new(app, analyst_user):
+    target = make_target(analyst_user, interval=1)
+    _run(target, NOW - timedelta(days=1))
+    assert monitor_service.away_summary([target.id], NOW) is None                                    # all of it was before they left
+    assert monitor_service.away_summary([target.id], None) is None                                   # first ever sign-in
+    assert monitor_service.away_summary([], NOW) is None
+
+
+def test_another_users_targets_never_appear_in_the_summary(app, analyst_user):
+    mine = make_target(analyst_user, "mine.example.com")
+    other = _other_analyst()
+    theirs = make_target(other, "theirs.example.com")
+    _run(theirs, NOW + timedelta(hours=1))
+    _event_at(theirs, NOW + timedelta(hours=1))
+    assert monitor_service.away_summary([mine.id], NOW) is None
+
+
+def test_mark_seen_writes_at_most_once_a_minute(app, analyst_user):
+    assert analyst_user.last_seen_at is None
+    assert monitor_service.mark_seen(analyst_user, NOW) is True and analyst_user.last_seen_at == NOW
+    assert monitor_service.mark_seen(analyst_user, NOW + timedelta(seconds=30)) is False
+    assert analyst_user.last_seen_at == NOW
+    assert monitor_service.mark_seen(analyst_user, NOW + timedelta(seconds=61)) is True
+    assert analyst_user.last_seen_at == NOW + timedelta(seconds=61)
+
+
+def _sign_out(client):
+    return client.post("/api/auth/logout")
+
+
+def test_monitoring_carries_on_after_sign_out_and_the_next_sign_in_says_so(client, analyst_user, scripted_world, inline_scans):
+    """The whole point, start to finish: sign in, sign out, let the scheduler run, sign back in."""
+    target = make_target(analyst_user, interval=1, last_run=datetime.utcnow() - timedelta(days=2))
+    FakeSubfinder.hosts = ["www.example.com"]
+
+    login(client, "analyst", "AnalystPass123!")
+    assert "Monitoring kept running" not in client.get("/dashboard").get_data(as_text=True)            # first visit: nothing to report
+    _sign_out(client)
+
+    assert client.get("/dashboard/details").status_code == 302                                         # really signed out
+    assert monitor_service.run_due(client.application) == [target.id]                                  # the scheduler, with no session at all
+
+    login(client, "analyst", "AnalystPass123!")
+    overview = client.get("/dashboard").get_data(as_text=True)
+    assert "Monitoring kept running while you were away." in overview
+    assert "1 scheduled scan ran and 0 changes were detected." in " ".join(overview.split())
+
+    page = client.get("/dashboard/details").get_data(as_text=True)
+    assert 'id="monitoring"' in page and "Continuous monitoring" in page
+    assert "Scheduler</span>" in page and "Baseline recorded" in page and ">Completed<" in page
+
+
+def test_a_second_sign_in_with_nothing_new_shows_no_banner(client, analyst_user):
+    make_target(analyst_user, interval=7)
+    login(client, "analyst", "AnalystPass123!")
+    _sign_out(client)
+    login(client, "analyst", "AnalystPass123!")
+    assert "Monitoring kept running" not in client.get("/dashboard").get_data(as_text=True)
+
+
+def test_signing_in_remembers_the_previous_visit_not_this_one(client, analyst_user):
+    old = datetime.utcnow() - timedelta(days=3)
+    analyst_user.last_seen_at = old
+    db.session.commit()
+
+    login(client, "analyst", "AnalystPass123!")
+
+    with client.session_transaction() as flask_session:
+        assert flask_session["monitor_away_since"] == old.isoformat()
+    db.session.expire_all()
+    assert db.session.get(User, analyst_user.id).last_seen_at > old                                    # but now they are here
+
+
+def test_a_request_while_signed_in_keeps_last_seen_fresh_but_static_files_do_not(client, analyst_user):
+    login(client, "analyst", "AnalystPass123!")
+    stale = datetime.utcnow() - timedelta(minutes=10)
+    db.session.get(User, analyst_user.id).last_seen_at = stale
+    db.session.commit()
+
+    client.get("/static/css/workspace.css")
+    db.session.expire_all()
+    assert db.session.get(User, analyst_user.id).last_seen_at == stale
+
+    client.get("/dashboard")
+    db.session.expire_all()
+    assert db.session.get(User, analyst_user.id).last_seen_at > stale
+
+
+def test_a_failure_to_record_a_visit_never_fails_the_request(client, analyst_user, monkeypatch):
+    login(client, "analyst", "AnalystPass123!")
+
+    def broken(user):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(monitor_service, "mark_seen", broken)
+    assert client.get("/dashboard").status_code == 200
+
+
+# ---- the dashboard panel and the status endpoints
+def test_the_dashboard_panel_shows_the_engine_the_totals_and_the_log(client, analyst_user):
+    target = make_target(analyst_user, interval=1, last_run=datetime.utcnow() - timedelta(hours=2))
+    db.session.add(MonitorHeartbeat(id=1, started_at=datetime.utcnow() - timedelta(hours=1), last_tick_at=datetime.utcnow()))
+    db.session.add(MonitorRun(target_id=target.id, trigger="scheduled", status="completed", started_at=datetime.utcnow() - timedelta(hours=1),
+                              finished_at=datetime.utcnow() - timedelta(minutes=57), changes=1, alert_sent=True, summary="1 new asset"))
+    db.session.commit()
+    login(client, "analyst", "AnalystPass123!")
+
+    html = client.get("/dashboard/details").get_data(as_text=True)
+
+    assert "monitor-engine-active" in html and "Monitoring engine active" in html and "last check" in html
+    assert "1 target monitored" in html
+    assert "Scheduled scans, last 7 days" in html and "1 new asset" in html and ">Emailed<" in html and "3m 00s" in html
+    assert "js/monitor-status.js" in html
+    assert 'id="monitor-engine"' in client.get("/dashboard").get_data(as_text=True)                   # the overview shows it too
+
+
+def test_a_silent_engine_is_shown_in_red(app, client, analyst_user, monkeypatch):
+    monkeypatch.setitem(app.config, "MONITOR_SCHEDULER_ENABLED", True)
+    make_target(analyst_user, interval=1)
+    db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=datetime.utcnow() - timedelta(hours=2)))
+    db.session.commit()
+    login(client, "analyst", "AnalystPass123!")
+    html = client.get("/dashboard/details").get_data(as_text=True)
+    assert "monitor-engine-stalled" in html and "not responding" in html
+
+
+def test_an_error_from_the_last_check_is_shown(client, analyst_user):
+    db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=datetime.utcnow(), last_error="RuntimeError: db down"))
+    db.session.commit()
+    login(client, "analyst", "AnalystPass123!")
+    assert "The last check hit an error: RuntimeError: db down" in client.get("/dashboard/details").get_data(as_text=True)
+
+
+def test_the_log_follows_the_selected_target_and_never_shows_someone_elses(client, analyst_user):
+    busy, quiet = make_target(analyst_user, "busy.example.com"), make_target(analyst_user, "quiet.example.com")
+    stranger = make_target(_other_analyst(), "stranger.example.com")
+    _run(busy, datetime.utcnow() - timedelta(hours=1)).summary = "only-busy-ran"
+    _run(stranger, datetime.utcnow() - timedelta(hours=1)).summary = "stranger-ran"
+    db.session.commit()
+    login(client, "analyst", "AnalystPass123!")
+
+    assert "only-busy-ran" in client.get(f"/dashboard/details?target_id={busy.id}").get_data(as_text=True)
+    assert "only-busy-ran" not in client.get(f"/dashboard/details?target_id={quiet.id}").get_data(as_text=True)
+    assert "stranger-ran" not in client.get("/dashboard/details").get_data(as_text=True)
+
+
+def test_an_empty_log_explains_itself(client, analyst_user):
+    make_target(analyst_user)
+    login(client, "analyst", "AnalystPass123!")
+    assert "No monitoring scans yet." in client.get("/dashboard/details").get_data(as_text=True)
+
+
+def test_the_status_endpoint_needs_a_sign_in_and_is_scoped_to_the_user(client, analyst_user):
+    mine = make_target(analyst_user, "mine.example.com", interval=1)
+    theirs = make_target(_other_analyst(), "theirs.example.com", interval=1)
+    _run(mine, datetime.utcnow() - timedelta(hours=1))
+    _run(theirs, datetime.utcnow() - timedelta(hours=1))
+    db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=datetime.utcnow()))
+    db.session.commit()
+
+    assert client.get("/workspace/monitoring/status").status_code == 302
+
+    login(client, "analyst", "AnalystPass123!")
+    body = client.get("/workspace/monitoring/status").get_json()
+    assert body["engine"]["state"] == "active" and body["engine"]["last_check_at"].endswith("Z")
+    assert [r["target_id"] for r in body["runs"]] == [mine.id] and body["activity"]["scheduled_runs"] == 1
+
+
+def test_admins_see_monitoring_across_every_target(client, analyst_user, admin_user):
+    target = make_target(analyst_user, interval=1)
+    _run(target, datetime.utcnow() - timedelta(hours=1))
+    login(client, "admin", "AdminPass123!")
+    assert len(client.get("/workspace/monitoring/status").get_json()["runs"]) == 1
+
+
+def test_the_public_health_check_goes_red_when_monitoring_goes_quiet(app, client, monkeypatch):
+    monkeypatch.setitem(app.config, "MONITOR_SCHEDULER_ENABLED", True)
+    assert client.get("/api/health/monitoring").status_code == 503                                    # never reported
+
+    db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=datetime.utcnow()))
+    db.session.commit()
+    resp = client.get("/api/health/monitoring")
+    assert resp.status_code == 200 and resp.get_json()["monitoring"]["state"] == "active"
+    assert "last_error" not in resp.get_json()["monitoring"]                                          # timestamps only
+
+    beat = db.session.get(MonitorHeartbeat, 1)
+    beat.last_tick_at = datetime.utcnow() - timedelta(hours=1)
+    db.session.commit()
+    assert client.get("/api/health/monitoring").status_code == 503
+
+    monkeypatch.setitem(app.config, "MONITOR_SCHEDULER_ENABLED", False)
+    assert client.get("/api/health/monitoring").get_json()["monitoring"]["state"] == "disabled"
+    assert client.get("/api/health/monitoring").status_code == 200                                    # off on purpose is not an outage
+
+
+def test_deleting_a_target_removes_its_monitoring_log(app, analyst_user):
+    target = make_target(analyst_user)
+    _run(target, NOW)
+    db.session.delete(target)
+    db.session.commit()
+    assert MonitorRun.query.count() == 0

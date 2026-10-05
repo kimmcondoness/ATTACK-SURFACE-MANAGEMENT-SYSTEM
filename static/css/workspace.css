@@ -2051,3 +2051,142 @@ tbody tr:hover {
   font-size: 0.76rem;
   color: var(--panel-muted);
 }
+
+/* sharing a report with Threat Intelligence */
+.share-form {
+  flex-wrap: nowrap;
+}
+
+.share-note {
+  flex: 1 1 11rem;
+  min-width: 8rem;
+  padding: 0.28rem 0.45rem;
+  background: var(--panel-bg-raised);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  color: var(--panel-text);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+}
+
+.share-note:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.share-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.share-state .change-detail {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+.shared-note {
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  color: var(--panel-muted);
+}
+
+/* "what happened while you were signed out" banner, shown after signing back in */
+.monitor-away {
+  margin-bottom: 1.25rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #b7dcc2;
+  border-left: 3px solid var(--accent-dark);
+  background: #eaf4ec;
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+}
+
+.monitor-away a {
+  margin-left: 0.35rem;
+  color: inherit;
+  font-weight: 600;
+}
+
+/* the monitoring engine's live status line (green = alive, amber = quiet, red = not responding) */
+.monitor-engine {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 1.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.ws-panel .monitor-engine {
+  background: var(--panel-bg-raised);
+  margin-bottom: 0.9rem;
+}
+
+.monitor-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--panel-muted);
+}
+
+.monitor-engine-active .monitor-dot {
+  background: #3fae6a;
+  box-shadow: 0 0 0 3px rgba(63, 174, 106, 0.25);
+}
+
+.monitor-engine-waiting .monitor-dot,
+.monitor-engine-disabled .monitor-dot {
+  background: #f5b942;
+}
+
+.monitor-engine-stalled .monitor-dot {
+  background: #ff6b63;
+  box-shadow: 0 0 0 3px rgba(217, 83, 79, 0.25);
+}
+
+.monitor-error {
+  margin: -0.4rem 0 0.9rem;
+  font-size: 0.76rem;
+  color: #f0a29e;
+}
+
+.monitor-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.monitor-totals > div {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg-raised);
+}
+
+.monitor-totals .n {
+  display: block;
+  font-family: var(--mono);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--panel-text);
+}
+
+.monitor-totals .n-small {
+  font-size: 0.95rem;
+  line-height: 2.05rem;
+}
+
+.monitor-totals .l {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--panel-muted);
+}

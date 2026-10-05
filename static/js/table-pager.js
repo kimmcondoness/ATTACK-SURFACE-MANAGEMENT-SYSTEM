@@ -1,5 +1,8 @@
 // Splits long tables into pages. Mark a table with data-paginate="10" (rows per page);
 // the pager is added underneath it and disappears if everything fits on one page.
+//
+// Works with static/js/table-filter.js: rows the filter has hidden (data-filtered="hide") are left out,
+// the pages are worked out from the rows that remain, and a new filter sends the table back to page 1.
 (function () {
   var ELLIPSIS = '…';
 
@@ -41,12 +44,12 @@
     }
     var size = parseInt(table.dataset.paginate, 10) || 10;
     var rows = Array.prototype.slice.call(body.rows);
-    var total = Math.ceil(rows.length / size);
-    if (total <= 1) {
-      return;
+    if (Math.ceil(rows.length / size) <= 1) {
+      return;   // filtering can only shrink the table, so it never needs pages
     }
 
     var current = 1;
+    var total = 1;
     var nav = document.createElement('nav');
     nav.className = 'pager';
     nav.setAttribute('aria-label', 'Table pages');
@@ -61,11 +64,17 @@
     anchor.parentNode.insertBefore(nav, anchor.nextSibling);
 
     function render(focusPage) {
+      var matching = rows.filter(function (row) { return row.dataset.filtered !== 'hide'; });
+      total = Math.max(1, Math.ceil(matching.length / size));
+      current = Math.min(current, total);
       var first = (current - 1) * size;
-      rows.forEach(function (row, i) {
-        row.hidden = i < first || i >= first + size;
+      var onPage = matching.slice(first, first + size);
+      rows.forEach(function (row) {
+        row.hidden = onPage.indexOf(row) === -1;
       });
-      info.textContent = 'Showing ' + (first + 1) + '–' + Math.min(first + size, rows.length) + ' of ' + rows.length;
+
+      nav.hidden = total <= 1;   // a filter can leave everything on one page
+      info.textContent = onPage.length ? 'Showing ' + (first + 1) + '–' + (first + onPage.length) + ' of ' + matching.length : '';
 
       buttons.textContent = '';
       var prev = button('‹ Prev', current - 1, 'pager-step', 'Previous page');
@@ -109,6 +118,12 @@
       }
       current = page;
       render(page);
+    });
+
+    // The filter has just re-marked the rows: start again from the first page of whatever matches.
+    table.addEventListener('table-filter', function () {
+      current = 1;
+      render();
     });
 
     render();

@@ -57,6 +57,48 @@
         </div>
       </div>
 
+      <section id="shared-reports" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Reports shared by analysts</h2>
+          <span>{{ shared_reports|length }} total{% if shared_new_count %} &middot; {{ shared_new_count }} new{% endif %}</span>
+        </div>
+        {% if shared_reports %}
+        <p class="ws-report-summary">
+          Cybersecurity Analysts share the reports they export with you here. You download exactly the file the analyst
+          exported (same PDF or CSV), so you are always reading the same document they are.
+        </p>
+        <div class="table-scroll">
+          <table data-paginate="10">
+            <thead>
+              <tr><th>Target</th><th>Format</th><th>Shared by</th><th>Shared (UTC)</th><th>Note</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              {% for item in shared_reports %}
+              {% set share = item.share %}
+              <tr>
+                <td class="text-mono">{{ item.domain }}</td>
+                <td><span class="pill pill-inactive">{{ item.report.report_type|upper }}</span></td>
+                <td>{{ item.shared_by }}</td>
+                <td class="text-mono">{{ share.shared_at.strftime('%Y-%m-%d %H:%M') if share.shared_at else '-' }}</td>
+                <td>{{ share.note or '-' }}</td>
+                <td>
+                  {% if share.id in shared_opened_ids %}<span class="pill pill-inactive">Downloaded</span>
+                  {% else %}<span class="change-badge change-new">New</span>{% endif %}
+                </td>
+                <td class="text-mono">
+                  {% if item.available %}<a href="{{ url_for('threat_intel.download_shared_report', share_id=share.id) }}">Download</a>
+                  {% else %}<span class="shared-note">File unavailable</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty-row">No reports have been shared with you yet. When a Cybersecurity Analyst shares an exported report, it appears here.</p>
+        {% endif %}
+      </section>
+
       {% if kev_matches %}
       <section class="ws-panel">
         <div class="ws-panel-head">
@@ -67,7 +109,7 @@
           These are findings across all targets whose CVE is confirmed by CISA to be actively exploited in the wild right now.
           Treat these as top priority regardless of severity label.
         </p>
-        <table>
+        <table data-paginate="10">
           <thead>
             <tr><th>CVE</th><th>Target</th><th>Title</th><th>CVSS</th></tr>
           </thead>
@@ -110,7 +152,7 @@
         </div>
 
         <div class="table-scroll">
-        <table class="ti-table" data-filterable>
+        <table class="ti-table" data-filterable data-paginate="10">
           <thead>
             <tr><th>Priority</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>EPSS</th><th>Target</th><th>Title</th><th>Flags</th><th>Status</th></tr>
           </thead>
@@ -157,7 +199,7 @@
           <span>General awareness, not limited to monitored assets</span>
         </div>
         {% if kev_feed %}
-        <table>
+        <table data-paginate="10">
           <thead>
             <tr><th>CVE</th><th>Vendor / product</th><th>Added</th><th>Action due</th></tr>
           </thead>
@@ -181,6 +223,7 @@
 
   <script src="{{ url_for('static', filename='js/workspace-charts.js') }}"></script>
   <script src="{{ url_for('static', filename='js/table-filter.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/table-pager.js') }}"></script>
 
   {% include "_cookie_banner.html" %}
 </body>

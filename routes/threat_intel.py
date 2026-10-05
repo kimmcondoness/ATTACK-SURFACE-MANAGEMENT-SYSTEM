@@ -1,11 +1,12 @@
 import csv
 import io
+import os
 
-from flask import Blueprint, Response, flash, redirect, render_template, url_for
+from flask import Blueprint, Response, flash, redirect, render_template, send_file, url_for
 from flask_login import current_user, login_required
 
 from models import ROLE_IT_ADMIN, ROLE_THREAT_INTEL, Asset, AuthorizedTarget, Vulnerability
-from services import epss_service
+from services import epss_service, report_share_service
 from services.kev_service import recent_kev_entries
 from services.risk_service import vulnerability_priority
 from utils.audit import log_action
@@ -58,7 +59,9 @@ def threat_intel_page():
         key: (round(value * 100 / max_stat) if max_stat else 0) for key, value in stat_values.items()
     }
 
-    kev_feed = recent_kev_entries(10)
+    kev_feed = recent_kev_entries(30)   # three pages of ten
+    shared_reports = report_share_service.inbox()
+    opened = report_share_service.downloaded_share_ids(current_user.id)
 
     shown = prioritized[:100]
     scores = epss_service.lookup([cve for v in shown for cve in epss_service.cve_ids(v.cve)])
@@ -74,6 +77,9 @@ def threat_intel_page():
         prioritized_total=len(prioritized),
         kev_matches=kev_matches,
         kev_feed=kev_feed,
+        shared_reports=shared_reports,
+        shared_opened_ids=opened,
+        shared_new_count=sum(1 for item in shared_reports if item["share"].id not in opened),
         stat_values=stat_values,
         stat_bar_pct=stat_bar_pct,
         priority=vulnerability_priority,
@@ -81,6 +87,23 @@ def threat_intel_page():
         epss_for=lambda vuln: epss_service.best_score(vuln.cve, scores),
         epss_level=epss_service.level,
     )
+
+
+@threat_intel_bp.route("/reports/<int:share_id>/download", methods=["GET"])
+@login_required
+def download_shared_report(share_id):
+    """Download a report an analyst shared: the same file they exported."""
+    if current_user.role not in _ALLOWED_ROLES:
+        return _forbidden()
+
+    back = url_for("threat_intel.threat_intel_page") + "#shared-reports"
+    found = report_share_service.get_shared(share_id)
+    if not found or not os.path.exists(found[1].file_path):
+        flash("That shared report is no longer available.", "error")
+        return redirect(back)
+
+    log_action(current_user.id, report_share_service.DOWNLOAD_ACTION, detail=f"share_id={share_id}")
+    return send_file(found[1].file_path, as_attachment=True)
 
 
 @threat_intel_bp.route("/briefing.csv", methods=["GET"])

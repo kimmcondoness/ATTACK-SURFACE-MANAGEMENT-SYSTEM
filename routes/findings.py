@@ -2,7 +2,7 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
 from models import SEVERITIES, VULN_STATUSES, Report
-from services import inventory_service
+from services import inventory_service, report_share_service
 from services.risk_service import vulnerability_priority
 from services.report_service import opened_report_ids
 from services.dork_service import total_dork_count
@@ -45,6 +45,8 @@ def findings_page():
         findings=findings,
         reports=reports,
         read_report_ids=opened_report_ids(current_user.id),
+        shares=report_share_service.shares_by_report([r.id for r in reports]),
+        shares_opened_ids=report_share_service.downloaded_share_ids(),
         target_map={t.id: t.domain for t in targets},
         asset_label=_asset_label,
         priority=vulnerability_priority,

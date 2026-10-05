@@ -31,6 +31,9 @@
         {% endif %}
       {% endwith %}
 
+      {% include "_monitor_away.html" %}
+      {% include "_monitor_engine.html" %}
+
       <div class="ws-stats">
         <div class="ws-stat"><span class="n">{{ summary.total_targets }}</span><span class="l">Targets</span></div>
         <div class="ws-stat"><span class="n">5</span><span class="l">Categories</span></div>
@@ -89,6 +92,8 @@
       <p class="ws-hint">Pick a section from the sidebar, or click a category above, to see the full dashboard.</p>
     </main>
   </div>
+
+  <script src="{{ url_for('static', filename='js/monitor-status.js') }}"></script>
 
   {% include "_cookie_banner.html" %}
 </body>

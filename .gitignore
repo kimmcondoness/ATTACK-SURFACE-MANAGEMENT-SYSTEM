@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
+*.sql
 .env.example
 instance/
 *.db
@@ -11,18 +12,16 @@ reports/*.csv
 .pytest_cache/
 *.egg-info/
 
-# Large third-party installers pulled down for local IIS setup -- not
-# source, shouldn't be redistributed via this repo's history.
+
 iis-installers/
 
-# Per-machine Claude Code settings (permission allowlists etc.), not
-# meant to be shared between machines/users.
+
 .claude/settings.local.json
 
-# Anything a local IIS/NSSM service run might drop here.
+
 *.log
 
-# Local AI-assistant tooling and audit output, not for the public repo
+
 .agents/
 .claude/
 AGENTS.md

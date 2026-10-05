@@ -119,7 +119,7 @@ def intel_page(client, analyst_user, monkeypatch):
 
 
 def _rows(html):
-    body = re.search(r'<table class="ti-table" data-filterable>.*?<tbody>(.*?)</tbody>', html, re.S).group(1)
+    body = re.search(r'<table class="ti-table" data-filterable data-paginate="10">.*?<tbody>(.*?)</tbody>', html, re.S).group(1)
     return re.findall(r"<tr data-severity=.*?</tr>", body, re.S)
 
 
@@ -169,7 +169,7 @@ def test_search_and_severity_filter_row_sits_above_the_table(intel_page):
     assert 'placeholder="Filter by keyword, CVE, or domain..."' in intel_page
     select = re.search(r'<select id="severity-filter".*?</select>', intel_page, re.S).group(0)
     assert re.findall(r'<option value="([^"]*)">([^<]+)</option>', select) == [("", "All"), ("critical", "Critical"), ("high", "High"), ("medium", "Medium"), ("low", "Low")]
-    assert intel_page.index('id="table-search"') < intel_page.index('<table class="ti-table" data-filterable>')
+    assert intel_page.index('id="table-search"') < intel_page.index('<table class="ti-table" data-filterable data-paginate="10">')
     assert intel_page.index("<h2>Prioritized findings</h2>") < intel_page.index('id="table-search"')
 
 
@@ -215,3 +215,63 @@ def test_the_page_still_renders_when_the_epss_service_is_down(client, analyst_us
 def test_analysts_still_cannot_open_the_page(client, analyst_user):
     login(client, "analyst", "AnalystPass123!")
     assert client.get("/workspace/threat-intel").status_code == 302
+
+
+# ------------------------------------------------------------------ ten rows to a page
+def _many_findings(owner, count):
+    target = AuthorizedTarget(domain="many.example.com", owner_id=owner.id, authorized=True)
+    db.session.add(target)
+    db.session.commit()
+    asset = Asset(target_id=target.id, subdomain="www.many.example.com")
+    db.session.add(asset)
+    db.session.commit()
+    db.session.add_all([
+        Vulnerability(asset_id=asset.id, severity="high", title=f"Finding number {i}", cve=f"CVE-2024-{1000 + i}", cvss_score=7.5, kev=True, status="open")
+        for i in range(count)
+    ])
+    db.session.commit()
+
+
+def _page_as_intel(client, monkeypatch, entries=()):
+    monkeypatch.setattr(threat_intel, "recent_kev_entries", lambda limit=10: list(entries)[:limit])
+    monkeypatch.setattr(epss_service, "_fetch_json", _epss_api({}))
+    intel = User(username="intel3", email="intel3@example.com", role=ROLE_THREAT_INTEL)
+    intel.set_password("IntelPass#123")
+    db.session.add(intel)
+    db.session.commit()
+    login(client, "intel3", "IntelPass#123")
+    return client.get("/workspace/threat-intel").get_data(as_text=True)
+
+
+def test_the_findings_and_both_kev_tables_are_paged_ten_rows_at_a_time(client, analyst_user, monkeypatch):
+    _many_findings(analyst_user, 35)
+    entries = [{"cveID": f"CVE-2025-{i:04d}", "vendorProject": "Vendor", "product": "Product", "dateAdded": "2025-01-01", "dueDate": "2025-02-01"} for i in range(25)]
+
+    html = _page_as_intel(client, monkeypatch, entries)
+
+    assert html.count('data-paginate="10"') == 3                                                        # KEV matches, prioritized findings, KEV catalog
+    for heading in ("Exposure matched against CISA KEV", "Prioritized findings", "CISA KEV catalog: recent additions"):
+        section = html.split(f"<h2>{heading}</h2>")[1].split("</section>")[0]
+        assert 'data-paginate="10"' in section, heading
+    assert len(_rows(html)) == 35                                                                       # every row is sent; the page script shows ten
+
+
+def test_the_pager_and_filter_scripts_are_both_loaded_in_the_right_order(client, analyst_user, monkeypatch):
+    html = _page_as_intel(client, monkeypatch)
+    filter_at, pager_at = html.index("js/table-filter.js"), html.index("js/table-pager.js")
+    assert filter_at < pager_at
+
+
+def test_the_kev_catalog_feed_is_long_enough_to_need_a_second_page(client, analyst_user, monkeypatch):
+    asked = []
+    monkeypatch.setattr(threat_intel, "recent_kev_entries", lambda limit=10: asked.append(limit) or [])
+    monkeypatch.setattr(epss_service, "_fetch_json", _epss_api({}))
+    intel = User(username="intel4", email="intel4@example.com", role=ROLE_THREAT_INTEL)
+    intel.set_password("IntelPass#123")
+    db.session.add(intel)
+    db.session.commit()
+    login(client, "intel4", "IntelPass#123")
+
+    client.get("/workspace/threat-intel")
+
+    assert asked == [30]
