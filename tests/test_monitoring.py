@@ -914,6 +914,7 @@ def test_every_check_leaves_a_heartbeat_the_status_reads(app, analyst_user, monk
     monkeypatch.setattr(monitor_service, "run_due", lambda app_: [])
     assert monitor_service.engine_status(app)["state"] == "disabled"                                  # nothing has reported (and tests run no scheduler)
 
+    make_target(analyst_user, interval=7)                                                            # something is being monitored
     started = datetime.utcnow() - timedelta(hours=3)
     monitor_service._tick(app, started)
 
@@ -925,7 +926,9 @@ def test_every_check_leaves_a_heartbeat_the_status_reads(app, analyst_user, monk
     assert MonitorHeartbeat.query.count() == 1                                                       # one row, rewritten each time
 
 
-def test_a_failing_check_still_beats_and_shows_its_error(app, monkeypatch):
+def test_a_failing_check_still_beats_and_shows_its_error(app, analyst_user, monkeypatch):
+    make_target(analyst_user, interval=7)
+
     def boom(app_):
         raise RuntimeError("database hiccup")
 
@@ -940,8 +943,9 @@ def test_a_failing_check_still_beats_and_shows_its_error(app, monkeypatch):
     assert monitor_service.engine_status(app)["last_error"] is None                                  # recovered
 
 
-def test_the_engine_is_stalled_when_its_heartbeat_goes_quiet(app, monkeypatch):
+def test_the_engine_is_stalled_when_its_heartbeat_goes_quiet(app, analyst_user, monkeypatch):
     monkeypatch.setitem(app.config, "MONITOR_SCHEDULER_ENABLED", True)
+    make_target(analyst_user, interval=7)
     assert monitor_service.engine_status(app)["state"] == "waiting"                                  # never reported
 
     db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=NOW))
@@ -1260,8 +1264,8 @@ def test_the_public_health_check_goes_red_when_monitoring_goes_quiet(app, client
     db.session.add(MonitorHeartbeat(id=1, started_at=NOW, last_tick_at=datetime.utcnow()))
     db.session.commit()
     resp = client.get("/api/health/monitoring")
-    assert resp.status_code == 200 and resp.get_json()["monitoring"]["state"] == "active"
-    assert "last_error" not in resp.get_json()["monitoring"]                                          # timestamps only
+    assert resp.status_code == 200 and resp.get_json()["monitoring"]["state"] == "idle"               # responding, nothing to monitor
+    assert "last_error" not in resp.get_json()["monitoring"]                                          # timestamps and a count only
 
     beat = db.session.get(MonitorHeartbeat, 1)
     beat.last_tick_at = datetime.utcnow() - timedelta(hours=1)

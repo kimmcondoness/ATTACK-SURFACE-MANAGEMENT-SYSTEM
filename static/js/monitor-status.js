@@ -31,17 +31,31 @@
     return base === null || base === undefined ? null : base + (Date.now() - receivedAt) / 1000;
   }
 
+  // What the engine is working on: nothing (idle), or how many targets, and how many are the viewer's own.
+  function workText(e) {
+    if (e.state === 'idle') {
+      return 'no monitoring is turned on';
+    }
+    if (e.state !== 'active') {
+      return '';
+    }
+    var line = e.monitored_targets + ' target' + (e.monitored_targets === 1 ? '' : 's') + ' monitored';
+    if (e.other_monitored_targets > 0) {
+      line += ': ' + e.your_monitored_targets + ' yours, ' + e.other_monitored_targets + ' by other users';
+    }
+    return line;
+  }
+
   function draw() {
-    var label = engine ? engine.label : null;
-    if (label === null) {
+    if (engine === null) {
       return;   // nothing newer than the server-rendered line yet
     }
     box.className = 'monitor-engine monitor-engine-' + engine.state;
-    var line = label + ' · last check ' + ago(currentAge());
-    if (engine.monitored_targets !== undefined) {
-      line += ' · ' + engine.monitored_targets + ' target' + (engine.monitored_targets === 1 ? '' : 's') + ' monitored';
+    var parts = [engine.label, 'last check ' + ago(currentAge()), workText(engine)];
+    if (engine.started_at && (engine.state === 'active' || engine.state === 'idle')) {
+      parts.push('running since ' + engine.started_at.slice(0, 16).replace('T', ' ') + ' UTC');
     }
-    text.textContent = line;
+    text.textContent = parts.filter(Boolean).join(' · ');
   }
 
   function poll() {

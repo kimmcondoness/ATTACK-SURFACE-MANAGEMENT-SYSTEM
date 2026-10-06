@@ -11,6 +11,7 @@
     {% if user.role == 'threat_intel_analyst' %}
     <a href="{{ url_for('threat_intel.threat_intel_page') }}" class="{{ 'active' if active_nav == 'threat_intel' else '' }}">Threat Intelligence</a>
     <a href="{{ url_for('threat_intel.threat_intel_page') }}#shared-reports">Shared Reports</a>
+    <a href="{{ url_for('monitoring.overview') }}" class="{{ 'active' if active_nav == 'monitoring' else '' }}">Monitoring <span class="count">{{ monitor_nav()|length }}</span></a>
     <a href="{{ url_for('threat_intel.briefing_csv') }}">Threat Briefing (CSV)</a>
     {% else %}
       <a href="{{ url_for('auth_pages.dashboard_placeholder') }}" class="{{ 'active' if active_nav == 'overview' else '' }}">Overview</a>
@@ -50,6 +51,23 @@
         </div>
       </details>
       {% endif %}
+
+      {% set monitored = monitor_nav() %}
+      <details class="ws-group" {{ 'open' if monitored or an == 'monitoring' else '' }}>
+        <summary>Monitoring <span class="count">{{ monitored|length }}</span></summary>
+        <div class="ws-subnav">
+          {% for m in monitored[:8] %}
+          <a href="{{ url_for('monitoring.overview') }}#target-{{ m.target.id }}" class="ws-sub-two" title="{{ m.target.domain }}: {{ m.interval_label }}, set up by {{ m.set_by_name }}{{ ' (you)' if m.set_by_you else '' }}">
+            <span class="ws-sub-main">{{ m.target.domain }}</span>
+            <span class="ws-sub-note">{{ m.interval_label }} &middot; set up by {{ m.set_by_name }}{{ ' (you)' if m.set_by_you else '' }}</span>
+          </a>
+          {% else %}
+          <span class="ws-subitem">No target monitored yet</span>
+          {% endfor %}
+          {% if monitored|length > 8 %}<span class="ws-subitem">+ {{ monitored|length - 8 }} more in the overview</span>{% endif %}
+          <a href="{{ url_for('monitoring.overview') }}" class="{{ 'active' if an == 'monitoring' else '' }}">Monitoring overview</a>
+        </div>
+      </details>
 
       <a href="{{ url_for('findings.findings_page') }}" class="{{ 'active' if an == 'findings' else '' }}">Findings &amp; CVE Report</a>
     {% endif %}

@@ -12,6 +12,8 @@ from sqlalchemy import inspect, text
 COLUMN_UPGRADES = (
     ("authorized_targets", "monitor_interval_days", "INTEGER NULL"),
     ("authorized_targets", "monitor_last_run_at", "DATETIME NULL"),
+    ("authorized_targets", "monitor_set_by", "INTEGER NULL"),
+    ("authorized_targets", "monitor_set_at", "DATETIME NULL"),
     ("assets", "last_seen_at", "DATETIME NULL"),
     ("assets", "status", "VARCHAR(20) NOT NULL DEFAULT 'active'"),
     ("assets", "missed_runs", "INTEGER NOT NULL DEFAULT 0"),

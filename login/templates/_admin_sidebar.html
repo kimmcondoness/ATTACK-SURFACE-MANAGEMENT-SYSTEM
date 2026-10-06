@@ -8,7 +8,8 @@
   </div>
 
   <nav class="ws-nav">
-    <a href="{{ url_for('auth_pages.admin_dashboard') }}" class="active">Dashboard</a>
+    <a href="{{ url_for('auth_pages.admin_dashboard') }}" class="{{ '' if active_nav == 'monitoring' else 'active' }}">Dashboard</a>
+    <a href="{{ url_for('monitoring.overview') }}" class="{{ 'active' if active_nav == 'monitoring' else '' }}">Monitoring <span class="count">{{ monitor_nav()|length }}</span></a>
   </nav>
 
   <div class="ws-sidebar-foot">

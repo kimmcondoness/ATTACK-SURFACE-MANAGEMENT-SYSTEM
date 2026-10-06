@@ -567,7 +567,7 @@ def _monitoring_context(my_targets, scoped_target_ids):
     monitored = [t for t in my_targets if t.id in scoped_target_ids and t.authorized and t.monitor_interval_days]
     due = [monitor_service.next_run_at(t) for t in monitored]
     return {
-        "monitor_engine": monitor_service.engine_status(current_app, now),
+        "monitor_engine": monitor_service.engine_status(current_app, now, target_ids=[t.id for t in my_targets]),
         "monitor_activity": monitor_service.activity_totals(scoped_target_ids, now=now),
         "monitor_runs": monitor_service.recent_runs(scoped_target_ids, 50),
         "monitor_away": monitor_service.away_summary([t.id for t in my_targets], away_since),

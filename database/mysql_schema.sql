@@ -54,6 +54,8 @@ CREATE TABLE authorized_targets (
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   monitor_interval_days  INT      NULL,   -- continuous monitoring: re-scan every N days (NULL = off)
   monitor_last_run_at    DATETIME NULL,    -- when the last scan chain started
+  monitor_set_by         INT UNSIGNED NULL,  -- the user who turned monitoring on (or last changed its schedule)
+  monitor_set_at         DATETIME NULL,
   KEY ix_authorized_targets_owner_id (owner_id),
   CONSTRAINT fk_targets_owner FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

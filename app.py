@@ -155,11 +155,12 @@ def create_app(config_object=None):
 
     @app.route("/api/health/monitoring", methods=["GET"])
     def monitoring_health():
-        """For an uptime checker: 200 while the monitoring engine is reporting in (or is switched off
-        on purpose), 503 when it has gone quiet. No sign-in needed; it reveals only timestamps."""
+        """For an uptime checker: 200 while the monitoring engine is reporting in (active, or idle with
+        nothing to monitor) or is switched off on purpose, 503 when it has gone quiet. No sign-in
+        needed; it reveals only timestamps and a count."""
         status = monitor_service.engine_status(app)
         body = {key: status[key] for key in ("state", "label", "last_check_at", "age_seconds", "started_at", "monitored_targets")}
-        return jsonify({"monitoring": monitor_service.public_status(body)}), (200 if status["state"] in ("active", "disabled") else 503)
+        return jsonify({"monitoring": monitor_service.public_status(body)}), (200 if status["state"] in ("active", "idle", "disabled") else 503)
 
     @app.route("/", methods=["GET"])
     def index():

@@ -85,6 +85,10 @@ class AuthorizedTarget(db.Model):
     # Continuous monitoring: re-scan every N days (NULL = off) and when the last chain started.
     monitor_interval_days = db.Column(db.Integer)
     monitor_last_run_at = db.Column(db.DateTime)
+    # Who turned monitoring on (or last changed its schedule), and when. NULL while it is off, and for
+    # monitoring set up before this was recorded (see monitor_service.monitored_entries).
+    monitor_set_by = db.Column(db.Integer)
+    monitor_set_at = db.Column(db.DateTime)
 
     assets = db.relationship(
         "Asset", backref="target", lazy=True, cascade="all, delete-orphan"

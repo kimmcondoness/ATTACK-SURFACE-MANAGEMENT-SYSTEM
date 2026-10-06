@@ -10,7 +10,12 @@
      data-endpoint="{{ url_for('monitoring.status') }}"
      data-age="{{ monitor_engine.age_seconds if monitor_engine.age_seconds is not none else '' }}">
   <span class="monitor-dot" aria-hidden="true"></span>
-  <span id="monitor-engine-text">{{ monitor_engine.label }} &middot; last check {{ ago(monitor_engine.age_seconds) }}{% if monitor_engine.started_at %} &middot; running since {{ monitor_engine.started_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</span>
+  <span id="monitor-engine-text">{{ monitor_engine.label }} &middot; last check {{ ago(monitor_engine.age_seconds) }}
+    {%- if monitor_engine.state == 'idle' %} &middot; no monitoring is turned on
+    {%- elif monitor_engine.state == 'active' %} &middot; {{ monitor_engine.monitored_targets }} target{{ '' if monitor_engine.monitored_targets == 1 else 's' }} monitored
+      {%- if monitor_engine.other_monitored_targets %}: {{ monitor_engine.your_monitored_targets }} yours, {{ monitor_engine.other_monitored_targets }} by other users{% endif %}
+    {%- endif %}
+    {%- if monitor_engine.started_at and monitor_engine.state in ('active', 'idle') %} &middot; running since {{ monitor_engine.started_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</span>
 </div>
 {% if monitor_engine.last_error %}
 <p class="monitor-error">The last check hit an error: {{ monitor_engine.last_error }}</p>

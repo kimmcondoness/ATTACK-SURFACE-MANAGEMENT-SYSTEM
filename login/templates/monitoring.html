@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Monitoring - Attack Surface Management</title>
+  <link href="{{ url_for('static', filename='css/workspace.css') }}" rel="stylesheet">
+</head>
+<body>
+  {% set role_labels = {'it_admin': 'IT Admin', 'cybersecurity_analyst': 'Analyst', 'threat_intel_analyst': 'Threat Intel'} %}
+  <div class="ws-shell">
+    {% if user.role == 'it_admin' %}{% include "_admin_sidebar.html" %}{% else %}{% include "_workspace_sidebar.html" %}{% endif %}
+
+    <main class="ws-main">
+      <div class="ws-topbar">
+        <p class="kicker">Continuous monitoring</p>
+        <h1>Monitored targets</h1>
+        <p>
+          {% if org_wide %}Every target in the organisation that has automatic re-scanning turned on, and the user who set it up.
+          {% else %}Your targets that have automatic re-scanning turned on, and the user who set each one up.{% endif %}
+        </p>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert-{{ 'success' if category == 'success' else 'error' }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      {% include "_monitor_engine.html" %}
+
+      <section id="monitored" class="ws-panel">
+        <div class="ws-panel-head">
+          <h2>Continuous monitoring</h2>
+          <span>{{ entries|length }} target{{ '' if entries|length == 1 else 's' }} monitored</span>
+        </div>
+        {% if entries %}
+        <p class="ws-report-summary">
+          The scheduler re-scans each of these on its schedule, on the server, whether or not anyone is signed in.
+          {% if not org_wide %}To change or turn off a schedule, use the Monitoring column under <a href="{{ url_for('auth_pages.workspace_dashboard') }}#targets">Your targets</a> on the Dashboard.{% endif %}
+        </p>
+        <div class="table-scroll">
+          <table data-paginate="10">
+            <thead>
+              <tr>
+                <th>Target</th>{% if org_wide %}<th>Owner</th>{% endif %}<th>Schedule</th><th>Set up by</th><th>Set up (UTC)</th><th>Last scan (UTC)</th><th>Next scan (UTC)</th><th>State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for m in entries %}
+              <tr id="target-{{ m.target.id }}">
+                <td class="text-mono">{{ m.target.domain }}</td>
+                {% if org_wide %}<td>{{ m.owner_name }}</td>{% endif %}
+                <td>{{ m.interval_label }}</td>
+                <td>
+                  <strong>{{ m.set_by_name }}</strong>{% if m.set_by_you %} <span class="pill pill-active">You</span>{% endif %}
+                  {% if m.set_by_role %}<span class="change-detail">{{ role_labels.get(m.set_by_role, m.set_by_role) }}</span>{% endif %}
+                </td>
+                <td class="text-mono">{% if m.set_at %}{{ m.set_at.strftime('%Y-%m-%d %H:%M') }}{% else %}<span class="change-detail">not recorded</span>{% endif %}</td>
+                <td class="text-mono">{{ m.last_scan.strftime('%Y-%m-%d %H:%M') if m.last_scan else 'never' }}</td>
+                <td class="text-mono">{% if m.next_scan and m.next_scan > monitor_now %}{{ m.next_scan.strftime('%Y-%m-%d %H:%M') }}{% else %}due now{% endif %}</td>
+                <td>
+                  {% if m.state == 'scanning' %}<span class="pill pill-running">Scanning now</span>
+                  {% elif m.state == 'due' %}<span class="change-badge change-missing">Due now</span>
+                  {% else %}<span class="pill pill-active">Scheduled</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty-row">
+          {% if org_wide %}No target has continuous monitoring turned on.
+          {% else %}None of your targets has continuous monitoring turned on yet. Open <a href="{{ url_for('auth_pages.workspace_dashboard') }}#targets">Your targets</a> on the Dashboard and choose Daily, Weekly or Monthly in the Monitoring column.{% endif %}
+        </p>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/table-pager.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/monitor-status.js') }}"></script>
+
+  {% include "_cookie_banner.html" %}
+</body>
+</html>

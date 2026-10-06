@@ -219,6 +219,26 @@ body {
   cursor: default;
 }
 
+.ws-subnav a.ws-sub-two {
+  display: block;
+  line-height: 1.25;
+}
+
+.ws-sub-main {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-sub-note {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.68rem;
+  color: #7c9186;
+  overflow-wrap: anywhere;   /* "Daily · set up by <full name> (you)" wraps instead of losing the "(you)" */
+}
+
 .ws-subitem .tag-planned {
   font-family: var(--mono);
   font-size: 0.58rem;
@@ -1182,6 +1202,10 @@ tbody tr:hover {
   margin: 0 0 1rem;
 }
 
+.ws-report-summary a {
+  color: var(--accent);
+}
+
 .ws-export-actions {
   display: flex;
   gap: 0.6rem;
@@ -2141,6 +2165,11 @@ tbody tr:hover {
 .monitor-engine-active .monitor-dot {
   background: #3fae6a;
   box-shadow: 0 0 0 3px rgba(63, 174, 106, 0.25);
+}
+
+.monitor-engine-idle .monitor-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--panel-muted);
 }
 
 .monitor-engine-waiting .monitor-dot,

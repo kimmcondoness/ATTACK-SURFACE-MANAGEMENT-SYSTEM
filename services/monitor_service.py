@@ -24,6 +24,7 @@ Three jobs live here.
 
 import logging
 import os
+import re
 import threading
 from collections import Counter, namedtuple
 from datetime import datetime, timedelta
@@ -34,7 +35,10 @@ from sqlalchemy import or_
 from extensions import db
 from models import (
     MONITOR_INTERVALS,
+    ROLE_IT_ADMIN,
+    ROLE_THREAT_INTEL,
     Asset,
+    AuditLog,
     AuthorizedTarget,
     MonitorEvent,
     MonitorHeartbeat,
@@ -44,6 +48,7 @@ from models import (
     Vulnerability,
 )
 from services import job_registry, vulnerability_service
+from services.user_admin_service import display_name
 from utils.audit import log_action
 
 log = logging.getLogger(__name__)
@@ -91,7 +96,13 @@ def set_interval(target: AuthorizedTarget, choice: str, actor_id: int) -> Option
     """Turn monitoring on ("daily", "weekly", "monthly") or off ("off")."""
     if choice not in MONITOR_INTERVALS:
         raise ValueError(f"Choose one of: {', '.join(MONITOR_INTERVALS)}.")
-    target.monitor_interval_days = MONITOR_INTERVALS[choice]
+    days = MONITOR_INTERVALS[choice]
+    previous = target.monitor_interval_days
+    target.monitor_interval_days = days
+    if days is None:
+        target.monitor_set_by = target.monitor_set_at = None
+    elif days != previous or target.monitor_set_by is None:   # saving the same schedule again changes nothing
+        target.monitor_set_by, target.monitor_set_at = actor_id, utcnow()
     db.session.commit()
     log_action(actor_id, "monitoring_updated", detail=f"target_id={target.id} interval={choice}")
     return target.monitor_interval_days
@@ -237,6 +248,7 @@ def stop_scheduler():
 # ------------------------------------------------------------------- the record
 _ENGINE_LABELS = {
     "active": "Monitoring engine active",
+    "idle": "Monitoring engine idle",
     "stalled": "Monitoring engine not responding",
     "waiting": "Monitoring engine has not reported yet",
     "disabled": "Monitoring engine switched off",
@@ -257,17 +269,27 @@ def record_heartbeat(started_at: datetime, error: Optional[str] = None):
     db.session.commit()
 
 
-def engine_status(app, now: Optional[datetime] = None) -> dict:
+def engine_status(app, now: Optional[datetime] = None, target_ids=None) -> dict:
     """Is monitoring alive? Read from the heartbeat the scheduler leaves in the database, so the
-    answer is the same whoever asks, and whether or not anyone is signed in."""
+    answer is the same whoever asks, and whether or not anyone is signed in.
+
+    The engine only counts as "active" while some user has monitoring turned on; with nothing to
+    monitor it is "idle" (still responding, but with no work). `target_ids` is the viewer's own
+    scope, used to say how many of the monitored targets are theirs and how many belong to others."""
     now = now or utcnow()
     poll = app.config.get("MONITOR_POLL_SECONDS", 60)
     beat = db.session.get(MonitorHeartbeat, 1)
     last_tick = beat.last_tick_at if beat else None
     age = max(0, int((now - last_tick).total_seconds())) if last_tick else None
 
+    monitored = AuthorizedTarget.query.filter(
+        AuthorizedTarget.monitor_interval_days.isnot(None), AuthorizedTarget.authorized.is_(True)
+    )
+    total = monitored.count()
+    yours = total if target_ids is None else (monitored.filter(AuthorizedTarget.id.in_(list(target_ids))).count() if target_ids else 0)
+
     if age is not None and age <= poll * 3 + 30:   # tolerates a couple of slow checks
-        state = "active"
+        state = "active" if total else "idle"
     elif not app.config.get("MONITOR_SCHEDULER_ENABLED", True):
         state = "disabled"
     else:
@@ -280,9 +302,9 @@ def engine_status(app, now: Optional[datetime] = None) -> dict:
         "age_seconds": age,
         "started_at": beat.started_at if beat else None,
         "poll_seconds": poll,
-        "monitored_targets": AuthorizedTarget.query.filter(
-            AuthorizedTarget.monitor_interval_days.isnot(None), AuthorizedTarget.authorized.is_(True)
-        ).count(),
+        "monitored_targets": total,
+        "your_monitored_targets": yours,
+        "other_monitored_targets": total - yours,
         "running_scans": job_registry.running_count(),
         "last_error": beat.last_error if beat else None,
     }
@@ -394,12 +416,69 @@ def recover_interrupted() -> int:
 def visible_target_ids(user) -> list:
     """The targets whose monitoring this user may see: their own, or all of them for the roles
     that work across the organisation (admin, threat intelligence)."""
-    from models import ROLE_IT_ADMIN, ROLE_THREAT_INTEL
-
     query = AuthorizedTarget.query.with_entities(AuthorizedTarget.id)
     if user.role not in (ROLE_IT_ADMIN, ROLE_THREAT_INTEL):
         query = query.filter(AuthorizedTarget.owner_id == user.id)
     return [row.id for row in query.all()]
+
+
+_AUDIT_DETAIL = re.compile(r"target_id=(\d+) interval=(\w+)")
+
+
+def _earlier_setters(target_ids) -> dict:
+    """{target_id: (user_id, when)} for monitoring that was turned on before `monitor_set_by` was
+    recorded, worked out from the audit log: the last person to switch it on or change its schedule."""
+    wanted, found = set(target_ids), {}
+    for entry in AuditLog.query.filter_by(action="monitoring_updated").order_by(AuditLog.id).all():
+        match = _AUDIT_DETAIL.fullmatch(entry.detail or "")
+        if not match or int(match.group(1)) not in wanted:
+            continue
+        target_id = int(match.group(1))
+        if match.group(2) == "off":
+            found.pop(target_id, None)
+        else:
+            found[target_id] = (entry.user_id, entry.timestamp)
+    return found
+
+
+def monitored_entries(user) -> list:
+    """Every target with continuous monitoring on that `user` may see, with who set it up: an analyst
+    sees their own, the roles that work across the organisation (admin, threat intelligence) see all.
+
+    Each entry: target, owner_name, set_by_name, set_by_role, set_by_you, set_at, interval_label,
+    last_scan, next_scan and state ("scanning", "due" or "scheduled"). Monitoring that was set up
+    before the setter was recorded is attributed from the audit log, else to the target's owner."""
+    query = AuthorizedTarget.query.filter(
+        AuthorizedTarget.monitor_interval_days.isnot(None), AuthorizedTarget.authorized.is_(True)
+    ).order_by(AuthorizedTarget.domain)
+    if user.role not in (ROLE_IT_ADMIN, ROLE_THREAT_INTEL):
+        query = query.filter(AuthorizedTarget.owner_id == user.id)
+    targets = query.all()
+    if not targets:
+        return []
+
+    earlier = _earlier_setters([t.id for t in targets if t.monitor_set_by is None])
+    setter = {t.id: (t.monitor_set_by, t.monitor_set_at) if t.monitor_set_by else earlier.get(t.id, (t.owner_id, None)) for t in targets}
+    wanted = {t.owner_id for t in targets} | {who for who, _ in setter.values() if who}
+    people = {u.id: u for u in User.query.filter(User.id.in_(wanted)).all()}
+
+    entries = []
+    for target in targets:
+        set_by_id, set_at = setter[target.id]
+        who, owner = people.get(set_by_id), people.get(target.owner_id)
+        entries.append({
+            "target": target,
+            "owner_name": display_name(owner) if owner else "a former user",
+            "set_by_name": display_name(who) if who else "a former user",
+            "set_by_role": who.role if who else None,
+            "set_by_you": set_by_id == user.id,
+            "set_at": set_at,
+            "interval_label": interval_label(target.monitor_interval_days),
+            "last_scan": last_activity(target),
+            "next_scan": next_run_at(target),
+            "state": "scanning" if target_is_scanning(target.id) else ("due" if is_due(target) else "scheduled"),
+        })
+    return entries
 
 
 def mark_seen(user, now: Optional[datetime] = None) -> bool:

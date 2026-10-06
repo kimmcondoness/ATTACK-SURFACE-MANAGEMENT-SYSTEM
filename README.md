@@ -217,6 +217,15 @@ session timing out) never pauses it. Three things make that visible:
   database and is true whoever is looking. It turns amber/red when the scheduler goes quiet.
   `GET /workspace/monitoring/status` returns the same as JSON, and `GET /api/health/monitoring`
   (no sign-in) returns 200 while the engine is alive and 503 when it is not, for an uptime checker.
+- **Monitoring section in the sidebar** (under Network) and a **Monitoring overview** page: every
+  monitored target with its schedule, last and next scan, and **who set the monitoring up** (the
+  user who turned it on or last changed its schedule, recorded in `authorized_targets.monitor_set_by`;
+  "you" for your own). An analyst sees only their own targets; the IT Administrator and Threat
+  Intelligence see everyone's, with the owner shown beside who set it up.
+- **The engine status only says "active" while something is monitored.** With no monitoring turned on
+  by any user it shows **idle** (still responding, nothing to do), and when it is active it says how many
+  of the monitored targets are yours and how many belong to other users (a count only: one analyst never
+  sees another's target names).
 - **While you were away**: `users.last_seen_at` remembers when each user was last here. When they
   sign back in, the Overview and Dashboard say, for example, "Monitoring kept running while you
   were away. Since you were last here (2026-10-03 23:35 UTC), 3 scheduled scans ran and 2 changes
